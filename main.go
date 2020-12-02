@@ -13,10 +13,7 @@ import (
 	"io/ioutil"
 	"os"
 	"runtime"
-	"strconv"
-	"strings"
 
-	"github.com/jessevdk/go-flags"
 	"github.com/mattn/go-tty"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/chacha20poly1305"
@@ -24,41 +21,9 @@ import (
 
 const saltSize = 16
 
-var errInvalidTag = errors.New("message authentication failed")
+var errInvalidTag = errors.New("message authentication failed (password is wrong or data is corrupted)")
 
 var version = "v0.1.0"
-
-type memory uint32
-
-func (m *memory) UnmarshalFlag(s string) error {
-	var unit uint64 = 1
-	width := 32
-	if strings.HasSuffix(s, "k") {
-		s = strings.TrimSuffix(s, "k")
-	} else if strings.HasSuffix(s, "M") {
-		s = strings.TrimSuffix(s, "M")
-		unit = 1024
-		width -= 10
-	} else if strings.HasSuffix(s, "G") {
-		s = strings.TrimSuffix(s, "G")
-		unit = 1024 * 1024
-		width -= 20
-	}
-	i, err := strconv.ParseUint(s, 10, width)
-	if err != nil {
-		return err
-	}
-	*m = memory(i * unit)
-	return nil
-}
-
-type options struct {
-	Decrypt bool   `short:"d" long:"decrypt" description:"Decrypt data"`
-	Time    uint32 `short:"t" long:"time" default:"8" value-name:"N" description:"Argon2 time parameter"`
-	Memory  memory `short:"m" long:"memory" default:"1G" value-name:"N[kMG]" description:"Argon2 memory parameter"`
-	Threads uint8  `short:"p" long:"paralellism" default:"4" value-name:"N" description:"Argon2 paralellism parameter"`
-	Version bool   `long:"version" description:"Show version and exit"`
-}
 
 func getPassword(confirm bool) ([]byte, error) {
 	if val, ok := os.LookupEnv("PASSWORD"); ok {
@@ -113,7 +78,7 @@ func encrypt(r io.Reader, w io.Writer, opts *options) error {
 	}
 	header.Write(salt)
 
-	key := argon2.IDKey(password, salt, opts.Time, uint32(opts.Memory), opts.Threads, chacha20poly1305.KeySize)
+	key := argon2.IDKey(password, salt, opts.Time, opts.Memory, opts.Threads, chacha20poly1305.KeySize)
 
 	aead, err := chacha20poly1305.NewX(key)
 	if err != nil {
@@ -187,7 +152,7 @@ func decrypt(r io.Reader, w io.Writer, opts *options) error {
 	}
 	header.Write(salt)
 
-	key := argon2.IDKey(password, salt, opts.Time, uint32(opts.Memory), opts.Threads, chacha20poly1305.KeySize)
+	key := argon2.IDKey(password, salt, opts.Time, opts.Memory, opts.Threads, chacha20poly1305.KeySize)
 
 	aead, err := chacha20poly1305.NewX(key)
 	if err != nil {
@@ -218,33 +183,57 @@ func decrypt(r io.Reader, w io.Writer, opts *options) error {
 }
 
 func main() {
-	opts := &options{}
-	if _, err := flags.Parse(opts); err != nil {
-		var flagsErr *flags.Error
-		if errors.As(err, &flagsErr) && flagsErr.Type == flags.ErrHelp {
-			os.Exit(0)
-		}
+	opts, err := parseArgs(os.Args[1:])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "goenc: error: %v\n", err)
 		os.Exit(2)
 	}
 
-	if opts.Version {
+	if opts.Operation == opHelp {
+		fmt.Println(HelpMessage)
+		os.Exit(0)
+	}
+	if opts.Operation == opVersion {
 		fmt.Printf("goenc %s (%s/%s)\n", version, runtime.GOOS, runtime.GOARCH)
 		os.Exit(0)
 	}
 
-	if !opts.Decrypt {
-		err := encrypt(os.Stdin, os.Stdout, opts)
+	var r io.Reader = os.Stdin
+	var w io.Writer = os.Stdout
+	if opts.Input != "-" {
+		fh, err := os.Open(opts.Input)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "goenc: %v\n", err)
+			fmt.Fprintf(os.Stderr, "goenc: error: %v\n", err)
+			os.Exit(2)
+		}
+		defer fh.Close()
+		r = fh
+	}
+	if opts.Output != "-" {
+		flags := os.O_WRONLY | os.O_CREATE
+		if opts.NoClobber {
+			flags |= os.O_EXCL
+		}
+		fh, err := os.OpenFile(opts.Output, flags, 0o644)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "goenc: error: %v\n", err)
+			os.Exit(2)
+		}
+		defer fh.Close()
+		w = fh
+	}
+
+	if opts.Operation == opEncrypt {
+		if err := encrypt(r, w, opts); err != nil {
+			fmt.Fprintf(os.Stderr, "goenc: error: %v\n", err)
 			os.Exit(2)
 		}
 	} else {
-		err := decrypt(os.Stdin, os.Stdout, opts)
-		if err != nil {
+		if err := decrypt(r, w, opts); err != nil {
 			if err == io.EOF {
 				err = io.ErrUnexpectedEOF
 			}
-			fmt.Fprintf(os.Stderr, "goenc: %v\n", err)
+			fmt.Fprintf(os.Stderr, "goenc: error: %v\n", err)
 			if errors.Is(err, errInvalidTag) {
 				os.Exit(1)
 			}

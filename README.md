@@ -8,14 +8,13 @@ A simple file encryption tool
 ## Usage
 
 ```sh
-$ goenc < input > output    # encrypt
-$ goenc -d < input > output # decrypt
+$ goenc [-d] [<input>] [<output>]
 ```
 
 Password can be passed by the environment variable *PASSWORD*.
 
 ```sh
-$ PASSWORD=<password> goenc < input > output
+$ PASSWORD=<password> goenc <input> <output>
 ```
 
 ## Installation
