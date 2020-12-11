@@ -14,7 +14,6 @@ import (
 	"os"
 	"runtime"
 
-	"github.com/mattn/go-tty"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/chacha20poly1305"
 )
@@ -30,34 +29,28 @@ func getPassword(confirm bool) ([]byte, error) {
 		return []byte(val), nil
 	}
 
-	tty, err := tty.Open()
+	reader, err := newPasswordReader()
 	if err != nil {
 		return nil, err
 	}
-	defer tty.Close()
+	defer reader.Close()
 
-	if _, err := tty.Output().WriteString("Password: "); err != nil {
-		return nil, err
-	}
-	password, err := tty.ReadPassword()
+	password, err := reader.ReadPassword("Password: ")
 	if err != nil {
 		return nil, err
 	}
 
 	if confirm {
-		if _, err := tty.Output().WriteString("Confirm Password: "); err != nil {
-			return nil, err
-		}
-		confirmPassword, err := tty.ReadPassword()
+		confirmPassword, err := reader.ReadPassword("Confirm Password: ")
 		if err != nil {
 			return nil, err
 		}
-		if password != confirmPassword {
-			return nil, errors.New("Passwords does not match")
+		if !bytes.Equal(password, confirmPassword) {
+			return nil, errors.New("passwords does not match")
 		}
 	}
 
-	return []byte(password), nil
+	return password, nil
 }
 
 func encrypt(r io.Reader, w io.Writer, opts *options) error {
@@ -224,20 +217,22 @@ func main() {
 	}
 
 	if opts.Operation == opEncrypt {
-		if err := encrypt(r, w, opts); err != nil {
-			fmt.Fprintf(os.Stderr, "goenc: error: %v\n", err)
-			os.Exit(2)
-		}
+		err = encrypt(r, w, opts)
 	} else {
-		if err := decrypt(r, w, opts); err != nil {
-			if err == io.EOF {
-				err = io.ErrUnexpectedEOF
-			}
-			fmt.Fprintf(os.Stderr, "goenc: error: %v\n", err)
-			if errors.Is(err, errInvalidTag) {
-				os.Exit(1)
-			}
-			os.Exit(2)
+		err = decrypt(r, w, opts)
+	}
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			err = io.ErrUnexpectedEOF
+		} else if errors.Is(err, errSIGINT) {
+			os.Exit(130)
+		} else if errors.Is(err, errSIGQUIT) {
+			os.Exit(131)
 		}
+		fmt.Fprintf(os.Stderr, "goenc: error: %v\n", err)
+		if errors.Is(err, errInvalidTag) {
+			os.Exit(1)
+		}
+		os.Exit(2)
 	}
 }
