@@ -53,10 +53,10 @@ func getPassword(confirm bool) ([]byte, error) {
 	return password, nil
 }
 
-func encrypt(r io.Reader, w io.Writer, opts *options) error {
+func encrypt(r io.Reader, w io.Writer, opts *options) (n int, err error) {
 	password, err := getPassword(true)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	header := new(bytes.Buffer)
@@ -67,7 +67,7 @@ func encrypt(r io.Reader, w io.Writer, opts *options) error {
 
 	salt := make([]byte, saltSize)
 	if _, err := rand.Read(salt); err != nil {
-		return err
+		return 0, err
 	}
 	header.Write(salt)
 
@@ -75,73 +75,85 @@ func encrypt(r io.Reader, w io.Writer, opts *options) error {
 
 	aead, err := chacha20poly1305.NewX(key)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	nonce := make([]byte, chacha20poly1305.NonceSizeX)
 	if _, err := rand.Read(nonce); err != nil {
-		return err
+		return 0, err
 	}
 
 	plaintext, err := ioutil.ReadAll(r)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	var dst []byte
-	if cap(plaintext) >= len(plaintext)+aead.Overhead() {
+	if len(plaintext)+aead.Overhead() <= cap(plaintext) {
 		dst = plaintext[:0]
 	}
 	ciphertext := aead.Seal(dst, nonce, plaintext, header.Bytes())
 
-	if _, err := header.WriteTo(w); err != nil {
-		return err
+	if nn, err := header.WriteTo(w); err != nil {
+		return 0, err
+	} else {
+		n += int(nn)
 	}
-	if _, err := w.Write(nonce); err != nil {
-		return err
+	if nn, err := w.Write(nonce); err != nil {
+		return 0, err
+	} else {
+		n += nn
 	}
-	if _, err := w.Write(ciphertext); err != nil {
-		return err
+	if nn, err := w.Write(ciphertext); err != nil {
+		return 0, err
+	} else {
+		n += nn
 	}
 
-	return nil
+	return n, nil
 }
 
-func decrypt(r io.Reader, w io.Writer, opts *options) error {
-	var version uint8
-	if err := binary.Read(r, binary.LittleEndian, &version); err != nil {
-		return err
-	}
-	if version != 1 {
-		return fmt.Errorf("Invalid file format")
-	}
+func decrypt(r io.Reader, w io.Writer, opts *options) (n int, err error) {
+	defer func() {
+		if err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
+	}()
 
 	password, err := getPassword(false)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	header := new(bytes.Buffer)
-	header.WriteByte(1)
+
+	var version uint8
+	if err := binary.Read(r, binary.LittleEndian, &version); err != nil {
+		return 0, err
+	}
+	if version != 1 {
+		return 0, fmt.Errorf("invalid file format")
+	}
+	header.WriteByte(version)
 
 	if err := binary.Read(r, binary.LittleEndian, &opts.Time); err != nil {
-		return err
+		return 0, err
 	}
 	binary.Write(header, binary.LittleEndian, opts.Time)
 
 	if err := binary.Read(r, binary.LittleEndian, &opts.Memory); err != nil {
-		return err
+		return 0, err
 	}
 	binary.Write(header, binary.LittleEndian, opts.Memory)
 
 	if err := binary.Read(r, binary.LittleEndian, &opts.Threads); err != nil {
-		return err
+		return 0, err
 	}
 	binary.Write(header, binary.LittleEndian, opts.Threads)
 
 	salt := make([]byte, saltSize)
 	if _, err := io.ReadFull(r, salt); err != nil {
-		return err
+		return 0, err
 	}
 	header.Write(salt)
 
@@ -149,30 +161,28 @@ func decrypt(r io.Reader, w io.Writer, opts *options) error {
 
 	aead, err := chacha20poly1305.NewX(key)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	nonce := make([]byte, chacha20poly1305.NonceSizeX)
 	if _, err := io.ReadFull(r, nonce); err != nil {
-		return err
+		return 0, err
 	}
 
 	ciphertext, err := ioutil.ReadAll(r)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if len(ciphertext) < aead.Overhead() {
-		return io.ErrUnexpectedEOF
+		return 0, io.ErrUnexpectedEOF
 	}
 
 	plaintext, err := aead.Open(ciphertext[:0], nonce, ciphertext, header.Bytes())
 	if err != nil {
-		return errInvalidTag
+		return 0, errInvalidTag
 	}
 
-	w.Write(plaintext)
-
-	return nil
+	return w.Write(plaintext)
 }
 
 func main() {
@@ -216,15 +226,19 @@ func main() {
 		w = fh
 	}
 
+	var n int
 	if opts.Operation == opEncrypt {
-		err = encrypt(r, w, opts)
+		n, err = encrypt(r, w, opts)
 	} else {
-		err = decrypt(r, w, opts)
+		n, err = decrypt(r, w, opts)
+	}
+	if fh, ok := w.(*os.File); ok && err == nil {
+		if stat, err2 := fh.Stat(); err2 == nil && stat.Mode().IsRegular() {
+			err = fh.Truncate(int64(n))
+		}
 	}
 	if err != nil {
-		if errors.Is(err, io.EOF) {
-			err = io.ErrUnexpectedEOF
-		} else if errors.Is(err, errSIGINT) {
+		if errors.Is(err, errSIGINT) {
 			os.Exit(130)
 		} else if errors.Is(err, errSIGQUIT) {
 			os.Exit(131)
