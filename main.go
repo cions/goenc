@@ -22,7 +22,7 @@ const saltSize = 16
 
 var errInvalidTag = errors.New("message authentication failed (password is wrong or data is corrupted)")
 
-var version = "v0.1.0"
+var version = "v0.2.0"
 
 func getPassword(confirm bool) ([]byte, error) {
 	if val, ok := os.LookupEnv("PASSWORD"); ok {
