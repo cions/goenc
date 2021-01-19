@@ -2,6 +2,7 @@
 
 [![GitHub Releases](https://img.shields.io/github/downloads/cions/goenc/latest/total?logo=github)](https://github.com/cions/goenc/releases)
 [![CI](https://github.com/cions/goenc/workflows/CI/badge.svg)](https://github.com/cions/goenc/actions)
+[![Go Report Card](https://goreportcard.com/badge/github.com/cions/goenc)](https://goreportcard.com/report/github.com/cions/goenc)
 
 A simple file encryption tool
 

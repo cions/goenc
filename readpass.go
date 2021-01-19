@@ -1,4 +1,4 @@
-// Copyright (c) 2020 cions
+// Copyright (c) 2020-2021 cions
 // Licensed under the MIT License. See LICENSE for details
 
 package main
@@ -42,11 +42,11 @@ var (
 )
 
 var (
-	mask    = []byte{'*'}
-	bs      = []byte{'\b'}
-	clr_eos = "\x1b[J"      // Clear to end of screen
-	ebp     = "\x1b[?2004h" // Enable Bracketed Paste Mode
-	dbp     = "\x1b[?2004l" // Disable Bracketed Paste Mode
+	mask   = []byte{'*'}
+	bs     = []byte{'\b'}
+	clreos = "\x1b[J"      // Clear to end of screen
+	ebp    = "\x1b[?2004h" // Enable Bracketed Paste Mode
+	dbp    = "\x1b[?2004l" // Disable Bracketed Paste Mode
 )
 
 type tty interface {
@@ -184,7 +184,7 @@ func newPasswordReader() (*passwordReader, error) {
 }
 
 func (r *passwordReader) ReadPassword(prompt string) ([]byte, error) {
-	if _, err := io.WriteString(r, "\r"+clr_eos+ebp+prompt); err != nil {
+	if _, err := io.WriteString(r, "\r"+clreos+ebp+prompt); err != nil {
 		return nil, err
 	}
 
@@ -246,7 +246,7 @@ func (r *passwordReader) ReadPassword(prompt string) ([]byte, error) {
 				n = utf8.RuneCount(password[pos:])
 				r.Write(bs)
 				r.Write(bytes.Repeat(mask, n))
-				io.WriteString(r, clr_eos)
+				io.WriteString(r, clreos)
 				r.Write(bytes.Repeat(bs, n))
 			}
 		case actDeleteForwardChar:
@@ -256,22 +256,22 @@ func (r *passwordReader) ReadPassword(prompt string) ([]byte, error) {
 				password = password[:len(password)-n]
 				n = utf8.RuneCount(password[pos:])
 				r.Write(bytes.Repeat(mask, n))
-				io.WriteString(r, clr_eos)
+				io.WriteString(r, clreos)
 				r.Write(bytes.Repeat(bs, n))
 			}
 		case actKillLine:
 			password = password[:pos]
-			io.WriteString(r, clr_eos)
+			io.WriteString(r, clreos)
 		case actKillWholeLine:
 			n := utf8.RuneCount(password[:pos])
 			r.Write(bytes.Repeat(bs, n))
-			io.WriteString(r, clr_eos)
+			io.WriteString(r, clreos)
 			password = password[:0]
 			pos = 0
 		case actRefresh:
 			n := utf8.RuneCount(password[:pos])
 			r.Write(bytes.Repeat(bs, n))
-			io.WriteString(r, "\r"+clr_eos+prompt)
+			io.WriteString(r, "\r"+clreos+prompt)
 			r.Write(bytes.Repeat(mask, utf8.RuneCount(password)))
 			r.Write(bytes.Repeat(bs, utf8.RuneCount(password[pos:])))
 		case actPasteStart:

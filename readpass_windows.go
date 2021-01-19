@@ -1,4 +1,4 @@
-// Copyright (c) 2020 cions
+// Copyright (c) 2020-2021 cions
 // Licensed under the MIT License. See LICENSE for details
 
 // +build windows

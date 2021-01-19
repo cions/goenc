@@ -1,4 +1,4 @@
-// Copyright (c) 2020 cions
+// Copyright (c) 2020-2021 cions
 // Licensed under the MIT License. See LICENSE for details
 
 package main
@@ -22,7 +22,7 @@ const saltSize = 16
 
 var errInvalidTag = errors.New("message authentication failed (password is wrong or data is corrupted)")
 
-var version = "v0.2.0"
+var version = "v0.2.1"
 
 func getPassword(confirm bool) ([]byte, error) {
 	if val, ok := os.LookupEnv("PASSWORD"); ok {
@@ -94,21 +94,23 @@ func encrypt(r io.Reader, w io.Writer, opts *options) (n int, err error) {
 	}
 	ciphertext := aead.Seal(dst, nonce, plaintext, header.Bytes())
 
-	if nn, err := header.WriteTo(w); err != nil {
+	n1, err := header.WriteTo(w)
+	if err != nil {
 		return 0, err
-	} else {
-		n += int(nn)
 	}
-	if nn, err := w.Write(nonce); err != nil {
+	n += int(n1)
+
+	n2, err := w.Write(nonce)
+	if err != nil {
 		return 0, err
-	} else {
-		n += nn
 	}
-	if nn, err := w.Write(ciphertext); err != nil {
+	n += n2
+
+	n3, err := w.Write(ciphertext)
+	if err != nil {
 		return 0, err
-	} else {
-		n += nn
 	}
+	n += n3
 
 	return n, nil
 }
@@ -193,7 +195,7 @@ func main() {
 	}
 
 	if opts.Operation == opHelp {
-		fmt.Println(HelpMessage)
+		fmt.Println(helpMessage)
 		os.Exit(0)
 	}
 	if opts.Operation == opVersion {

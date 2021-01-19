@@ -1,4 +1,4 @@
-// Copyright (c) 2020 cions
+// Copyright (c) 2020-2021 cions
 // Licensed under the MIT License. See LICENSE for details
 
 package main
@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-const HelpMessage = `usage: goenc [options] [input] [output]
+const helpMessage = `usage: goenc [options] [input] [output]
 
 A simple file encryption tool
 
