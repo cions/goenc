@@ -10,9 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"runtime"
+	"runtime/debug"
 
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/chacha20poly1305"
@@ -22,7 +22,12 @@ const saltSize = 16
 
 var errInvalidTag = errors.New("message authentication failed (password is wrong or data is corrupted)")
 
-var version = "v0.2.1"
+func getVersion() string {
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		return bi.Main.Version
+	}
+	return "(devel)"
+}
 
 func getPassword(confirm bool) ([]byte, error) {
 	if val, ok := os.LookupEnv("PASSWORD"); ok {
@@ -83,7 +88,7 @@ func encrypt(r io.Reader, w io.Writer, opts *options) (n int, err error) {
 		return 0, err
 	}
 
-	plaintext, err := ioutil.ReadAll(r)
+	plaintext, err := io.ReadAll(r)
 	if err != nil {
 		return 0, err
 	}
@@ -171,7 +176,7 @@ func decrypt(r io.Reader, w io.Writer, opts *options) (n int, err error) {
 		return 0, err
 	}
 
-	ciphertext, err := ioutil.ReadAll(r)
+	ciphertext, err := io.ReadAll(r)
 	if err != nil {
 		return 0, err
 	}
@@ -199,7 +204,7 @@ func main() {
 		os.Exit(0)
 	}
 	if opts.Operation == opVersion {
-		fmt.Printf("goenc %s (%s/%s)\n", version, runtime.GOOS, runtime.GOARCH)
+		fmt.Printf("goenc %s (%s/%s)\n", getVersion(), runtime.GOOS, runtime.GOARCH)
 		os.Exit(0)
 	}
 
