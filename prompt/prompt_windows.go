@@ -3,7 +3,7 @@
 
 // +build windows
 
-package main
+package prompt
 
 import (
 	"os"

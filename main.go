@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"runtime/debug"
 
+	"github.com/cions/goenc/prompt"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/chacha20poly1305"
 )
@@ -34,7 +35,7 @@ func getPassword(confirm bool) ([]byte, error) {
 		return []byte(val), nil
 	}
 
-	reader, err := newPasswordReader()
+	reader, err := prompt.NewReader()
 	if err != nil {
 		return nil, err
 	}
@@ -245,10 +246,8 @@ func main() {
 		}
 	}
 	if err != nil {
-		if errors.Is(err, errSIGINT) {
-			os.Exit(130)
-		} else if errors.Is(err, errSIGQUIT) {
-			os.Exit(131)
+		if se, ok := err.(*prompt.SignalError); ok {
+			os.Exit(128 + se.Signal())
 		}
 		fmt.Fprintf(os.Stderr, "goenc: error: %v\n", err)
 		if errors.Is(err, errInvalidTag) {

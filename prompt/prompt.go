@@ -1,17 +1,25 @@
 // Copyright (c) 2020-2021 cions
 // Licensed under the MIT License. See LICENSE for details
 
-package main
+package prompt
 
 import (
 	"bufio"
 	"bytes"
-	"errors"
 	"io"
 	"runtime"
+	"syscall"
 	"unicode/utf8"
 
 	"golang.org/x/term"
+)
+
+var (
+	mask   = []byte{'*'}
+	bs     = []byte{'\b'}
+	clreos = "\x1b[J"      // Clear to end of screen
+	ebp    = "\x1b[?2004h" // Enable Bracketed Paste Mode
+	dbp    = "\x1b[?2004l" // Disable Bracketed Paste Mode
 )
 
 type action int
@@ -36,18 +44,17 @@ const (
 	actPasteEnd
 )
 
-var (
-	errSIGINT  = errors.New("SIGINT")
-	errSIGQUIT = errors.New("SIGQUIT")
-)
+type SignalError struct {
+	sig syscall.Signal
+}
 
-var (
-	mask   = []byte{'*'}
-	bs     = []byte{'\b'}
-	clreos = "\x1b[J"      // Clear to end of screen
-	ebp    = "\x1b[?2004h" // Enable Bracketed Paste Mode
-	dbp    = "\x1b[?2004l" // Disable Bracketed Paste Mode
-)
+func (se *SignalError) Error() string {
+	return se.sig.String()
+}
+
+func (se *SignalError) Signal() int {
+	return int(se.sig)
+}
 
 type tty interface {
 	io.Reader
@@ -57,7 +64,7 @@ type tty interface {
 	Restore(*term.State) error
 }
 
-type passwordReader struct {
+type reader struct {
 	tty
 }
 
@@ -175,15 +182,15 @@ func tokenToAction(token []byte, inPaste bool) action {
 	}
 }
 
-func newPasswordReader() (*passwordReader, error) {
+func NewReader() (*reader, error) {
 	tty, err := newTTY()
 	if err != nil {
 		return nil, err
 	}
-	return &passwordReader{tty}, nil
+	return &reader{tty}, nil
 }
 
-func (r *passwordReader) ReadPassword(prompt string) ([]byte, error) {
+func (r *reader) ReadPassword(prompt string) ([]byte, error) {
 	if _, err := io.WriteString(r, "\r"+clreos+ebp+prompt); err != nil {
 		return nil, err
 	}
@@ -212,9 +219,9 @@ func (r *passwordReader) ReadPassword(prompt string) ([]byte, error) {
 		case actEOF:
 			return password, nil
 		case actSIGINT:
-			return nil, errSIGINT
+			return nil, &SignalError{sig: syscall.SIGINT}
 		case actSIGQUIT:
-			return nil, errSIGQUIT
+			return nil, &SignalError{sig: syscall.SIGQUIT}
 		case actBeginningOfLine:
 			if pos > 0 {
 				r.Write(bytes.Repeat(bs, utf8.RuneCount(password[:pos])))

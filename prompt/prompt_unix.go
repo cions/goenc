@@ -1,14 +1,15 @@
 // Copyright (c) 2020-2021 cions
 // Licensed under the MIT License. See LICENSE for details
 
-// +build !windows
+// +build darwin dragonfly freebsd linux netbsd openbsd solaris
 
-package main
+package prompt
 
 import (
 	"errors"
 	"os"
 
+	"golang.org/x/sys/unix"
 	"golang.org/x/term"
 )
 
@@ -27,10 +28,10 @@ func newTTY() (tty, error) {
 	if term.IsTerminal(int(os.Stderr.Fd())) {
 		return &unixTTY{tty: os.Stderr, needToClose: false}, nil
 	}
-	if tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0); err == nil {
+	if tty, err := os.OpenFile("/dev/tty", unix.O_RDWR|unix.O_NOCTTY, 0); err == nil {
 		return &unixTTY{tty: tty, needToClose: true}, nil
 	}
-	if tty, err := os.OpenFile("/dev/console", os.O_RDWR, 0); err == nil {
+	if tty, err := os.OpenFile("/dev/console", unix.O_RDWR|unix.O_NOCTTY, 0); err == nil {
 		return &unixTTY{tty: tty, needToClose: true}, nil
 	}
 	return nil, errors.New("failed to open the terminal")
