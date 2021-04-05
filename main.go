@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
@@ -41,13 +42,13 @@ func getPassword(confirm bool) ([]byte, error) {
 	}
 	defer reader.Close()
 
-	password, err := reader.ReadPassword("Password: ")
+	password, err := reader.ReadPassword(context.Background(), "Password: ")
 	if err != nil {
 		return nil, err
 	}
 
 	if confirm {
-		confirmPassword, err := reader.ReadPassword("Confirm Password: ")
+		confirmPassword, err := reader.ReadPassword(context.Background(), "Confirm Password: ")
 		if err != nil {
 			return nil, err
 		}

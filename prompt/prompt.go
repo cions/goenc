@@ -6,7 +6,11 @@ package prompt
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"errors"
 	"io"
+	"os"
+	"os/signal"
 	"runtime"
 	"syscall"
 	"unicode/utf8"
@@ -54,6 +58,43 @@ func (se *SignalError) Error() string {
 
 func (se *SignalError) Signal() int {
 	return int(se.sig)
+}
+
+type contextReader struct {
+	ctx      context.Context
+	signalCh <-chan os.Signal
+	r        io.Reader
+}
+
+type readResult struct {
+	b   []byte
+	err error
+}
+
+func (cr *contextReader) Read(b []byte) (n int, err error) {
+	ch := make(chan readResult)
+	go func() {
+		bb := make([]byte, len(b))
+		n, err := cr.r.Read(bb)
+		select {
+		case <-cr.ctx.Done():
+			return
+		default:
+		}
+		ch <- readResult{b: bb[:n], err: err}
+	}()
+	select {
+	case sig := <-cr.signalCh:
+		if ssig, ok := sig.(syscall.Signal); ok {
+			return 0, &SignalError{sig: ssig}
+		}
+		return 0, errors.New("caught signal: " + sig.String())
+	case <-cr.ctx.Done():
+		return 0, cr.ctx.Err()
+	case retval := <-ch:
+		copy(b, retval.b)
+		return len(retval.b), retval.err
+	}
 }
 
 type tty interface {
@@ -190,12 +231,19 @@ func NewReader() (*reader, error) {
 	return &reader{tty}, nil
 }
 
-func (r *reader) ReadPassword(prompt string) ([]byte, error) {
+func (r *reader) ReadPassword(ctx context.Context, prompt string) ([]byte, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	signalCh := make(chan os.Signal, 1)
+	signal.Notify(signalCh, syscall.SIGHUP, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
+	defer signal.Stop(signalCh)
+
 	if _, err := io.WriteString(r, "\r"+clreos+ebp+prompt); err != nil {
 		return nil, err
 	}
 
-	scanner := bufio.NewScanner(r)
+	scanner := bufio.NewScanner(&contextReader{ctx: ctx, signalCh: signalCh, r: r})
 	scanner.Split(scanToken)
 	password := make([]byte, 0, 256)
 	pos := 0
