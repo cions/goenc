@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/term"
+	"golang.org/x/text/width"
 )
 
 var (
@@ -231,7 +232,42 @@ func NewReader() (*reader, error) {
 	return &reader{tty}, nil
 }
 
-func (r *reader) ReadPassword(ctx context.Context, prompt string) ([]byte, error) {
+type Transformer func(src []byte) (dst []byte, width int)
+
+func CaretNotation(b []byte) ([]byte, int) {
+	dst := make([]byte, len(b))
+	n := 0
+
+	for len(b) > 0 {
+		r, size := utf8.DecodeRune(b)
+		if r < 0x20 || r == 0x7f {
+			dst = append(dst, '^', byte(r)^0x40)
+			n += 2
+		} else {
+			dst = append(dst, b[:size]...)
+			switch width.LookupRune(r).Kind() {
+			case width.EastAsianWide, width.EastAsianFullwidth:
+				n += 2
+			default:
+				n += 1
+			}
+		}
+		b = b[size:]
+	}
+
+	return dst, n
+}
+
+func Masked(b []byte) ([]byte, int) {
+	n := utf8.RuneCount(b)
+	return bytes.Repeat(mask, n), n
+}
+
+func NoDisplay(b []byte) ([]byte, int) {
+	return []byte{}, 0
+}
+
+func (r *reader) ReadRaw(ctx context.Context, prompt string, transformer Transformer) ([]byte, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -255,7 +291,8 @@ func (r *reader) ReadPassword(ctx context.Context, prompt string) ([]byte, error
 	}
 	defer func() {
 		if pos < len(password) {
-			r.Write(bytes.Repeat(mask, utf8.RuneCount(password[pos:])))
+			out, _ := transformer(password[pos:])
+			r.Write(out)
 		}
 		io.WriteString(r, "\r\n"+dbp)
 		r.Restore(state)
@@ -272,35 +309,40 @@ func (r *reader) ReadPassword(ctx context.Context, prompt string) ([]byte, error
 			return nil, &SignalError{sig: syscall.SIGQUIT}
 		case actBeginningOfLine:
 			if pos > 0 {
-				r.Write(bytes.Repeat(bs, utf8.RuneCount(password[:pos])))
+				_, n := transformer(password[:pos])
+				r.Write(bytes.Repeat(bs, n))
 				pos = 0
 			}
 		case actEndOfLine:
 			if pos < len(password) {
-				r.Write(bytes.Repeat(mask, utf8.RuneCount(password[pos:])))
+				out, _ := transformer(password[pos:])
+				r.Write(out)
 				pos = len(password)
 			}
 		case actBackwardChar:
 			if pos > 0 {
-				r.Write(bs)
 				_, n := utf8.DecodeLastRune(password[:pos])
+				_, m := transformer(password[pos-n : pos])
+				r.Write(bytes.Repeat(bs, m))
 				pos -= n
 			}
 		case actForwardChar:
 			if pos < len(password) {
-				r.Write(mask)
 				_, n := utf8.DecodeRune(password[pos:])
+				out, _ := transformer(password[pos : pos+n])
+				r.Write(out)
 				pos += n
 			}
 		case actDeleteBackwardChar:
 			if pos > 0 {
 				_, n := utf8.DecodeLastRune(password[:pos])
+				_, m := transformer(password[pos-n : pos])
 				copy(password[pos-n:], password[pos:])
 				password = password[:len(password)-n]
 				pos -= n
-				n = utf8.RuneCount(password[pos:])
-				r.Write(bs)
-				r.Write(bytes.Repeat(mask, n))
+				r.Write(bytes.Repeat(bs, m))
+				out, n := transformer(password[pos:])
+				r.Write(out)
 				io.WriteString(r, clreos)
 				r.Write(bytes.Repeat(bs, n))
 			}
@@ -309,8 +351,8 @@ func (r *reader) ReadPassword(ctx context.Context, prompt string) ([]byte, error
 				_, n := utf8.DecodeRune(password[pos:])
 				copy(password[pos:], password[pos+n:])
 				password = password[:len(password)-n]
-				n = utf8.RuneCount(password[pos:])
-				r.Write(bytes.Repeat(mask, n))
+				out, n := transformer(password[pos:])
+				r.Write(out)
 				io.WriteString(r, clreos)
 				r.Write(bytes.Repeat(bs, n))
 			}
@@ -318,17 +360,19 @@ func (r *reader) ReadPassword(ctx context.Context, prompt string) ([]byte, error
 			password = password[:pos]
 			io.WriteString(r, clreos)
 		case actKillWholeLine:
-			n := utf8.RuneCount(password[:pos])
+			_, n := transformer(password[:pos])
 			r.Write(bytes.Repeat(bs, n))
 			io.WriteString(r, clreos)
 			password = password[:0]
 			pos = 0
 		case actRefresh:
-			n := utf8.RuneCount(password[:pos])
+			_, n := transformer(password[:pos])
 			r.Write(bytes.Repeat(bs, n))
 			io.WriteString(r, "\r"+clreos+prompt)
-			r.Write(bytes.Repeat(mask, utf8.RuneCount(password)))
-			r.Write(bytes.Repeat(bs, utf8.RuneCount(password[pos:])))
+			out, _ := transformer(password)
+			r.Write(out)
+			_, n = transformer(password[pos:])
+			r.Write(bytes.Repeat(bs, n))
 		case actPasteStart:
 			inPaste = true
 		case actPasteEnd:
@@ -342,8 +386,8 @@ func (r *reader) ReadPassword(ctx context.Context, prompt string) ([]byte, error
 			if pos == len(password) {
 				password = append(password, token...)
 				pos = len(password)
-				n := utf8.RuneCount(token)
-				r.Write(bytes.Repeat(mask, n))
+				out, _ := transformer(token)
+				r.Write(out)
 			} else {
 				newlen := len(password) + len(token)
 				if newlen > cap(password) {
@@ -354,10 +398,12 @@ func (r *reader) ReadPassword(ctx context.Context, prompt string) ([]byte, error
 				password = password[:newlen]
 				copy(password[pos+len(token):], password[pos:])
 				copy(password[pos:], token)
-				n := utf8.RuneCount(password[pos:])
-				r.Write(bytes.Repeat(mask, n))
 				pos += len(token)
-				n = utf8.RuneCount(password[pos:])
+				out, _ := transformer(token)
+				r.Write(out)
+				out, n := transformer(password[pos:])
+				r.Write(out)
+				io.WriteString(r, clreos)
 				r.Write(bytes.Repeat(bs, n))
 			}
 		}
@@ -367,4 +413,16 @@ func (r *reader) ReadPassword(ctx context.Context, prompt string) ([]byte, error
 		return nil, err
 	}
 	return password, nil
+}
+
+func (r *reader) ReadString(ctx context.Context, prompt string) ([]byte, error) {
+	return r.ReadRaw(ctx, prompt, CaretNotation)
+}
+
+func (r *reader) ReadPassword(ctx context.Context, prompt string) ([]byte, error) {
+	return r.ReadRaw(ctx, prompt, Masked)
+}
+
+func (r *reader) ReadNoEcho(ctx context.Context, prompt string) ([]byte, error) {
+	return r.ReadRaw(ctx, prompt, NoDisplay)
 }
