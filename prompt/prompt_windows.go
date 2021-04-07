@@ -8,11 +8,13 @@ package prompt
 import (
 	"os"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/term"
 )
 
 type windowsTTY struct {
-	conin, conout *os.File
+	conin, conout   *os.File
+	inMode, outMode uint32
 }
 
 func newTTY() (tty, error) {
@@ -21,7 +23,7 @@ func newTTY() (tty, error) {
 		return nil, err
 	}
 
-	conout, err := os.OpenFile("CONOUT$", os.O_WRONLY, 0)
+	conout, err := os.OpenFile("CONOUT$", os.O_RDWR, 0)
 	if err != nil {
 		conin.Close()
 		return nil, err
@@ -48,9 +50,36 @@ func (t *windowsTTY) Close() error {
 }
 
 func (t *windowsTTY) MakeRaw() (*term.State, error) {
-	return term.MakeRaw(int(t.conin.Fd()))
+	if err := windows.GetConsoleMode(windows.Handle(t.conin.Fd()), &t.inMode); err != nil {
+		return nil, err
+	}
+
+	var mode uint32 = windows.ENABLE_VIRTUAL_TERMINAL_INPUT
+	if err := windows.SetConsoleMode(windows.Handle(t.conin.Fd()), mode); err != nil {
+		return nil, err
+	}
+
+	if err := windows.GetConsoleMode(windows.Handle(t.conout.Fd()), &t.outMode); err != nil {
+		return nil, err
+	}
+
+	mode = windows.ENABLE_PROCESSED_OUTPUT
+	mode |= windows.ENABLE_WRAP_AT_EOL_OUTPUT
+	mode |= windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING
+	mode |= windows.DISABLE_NEWLINE_AUTO_RETURN
+	if err := windows.SetConsoleMode(windows.Handle(t.conout.Fd()), mode); err != nil {
+		return nil, err
+	}
+
+	return nil, nil
 }
 
 func (t *windowsTTY) Restore(oldState *term.State) error {
-	return term.Restore(int(t.conin.Fd()), oldState)
+	if err := windows.SetConsoleMode(windows.Handle(t.conin.Fd()), t.inMode); err != nil {
+		return err
+	}
+	if err := windows.SetConsoleMode(windows.Handle(t.conout.Fd()), t.outMode); err != nil {
+		return err
+	}
+	return nil
 }

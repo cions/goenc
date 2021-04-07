@@ -275,10 +275,6 @@ func (r *reader) ReadRaw(ctx context.Context, prompt string, transformer Transfo
 	signal.Notify(signalCh, syscall.SIGHUP, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
 	defer signal.Stop(signalCh)
 
-	if _, err := io.WriteString(r, "\r"+clreos+ebp+prompt); err != nil {
-		return nil, err
-	}
-
 	scanner := bufio.NewScanner(&contextReader{ctx: ctx, signalCh: signalCh, r: r})
 	scanner.Split(scanToken)
 	password := make([]byte, 0, 256)
@@ -297,6 +293,10 @@ func (r *reader) ReadRaw(ctx context.Context, prompt string, transformer Transfo
 		io.WriteString(r, "\r\n"+dbp)
 		r.Restore(state)
 	}()
+
+	if _, err := io.WriteString(r, "\r"+clreos+ebp+prompt); err != nil {
+		return nil, err
+	}
 
 	for scanner.Scan() {
 		token := scanner.Bytes()
