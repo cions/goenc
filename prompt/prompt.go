@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strconv"
 	"syscall"
 	"unicode/utf8"
 
@@ -110,30 +111,65 @@ type reader struct {
 	tty
 }
 
+func isHex(b byte) bool {
+	return ('0' <= b && b <= '9') || ('A' <= b && b <= 'F') || ('a' <= b && b <= 'f')
+}
+
 func scanToken(data []byte, atEOF bool) (int, []byte, error) {
 	if atEOF && len(data) == 0 {
 		return 0, nil, nil
 	}
 
-	if data[0] != '\x1b' {
+	switch data[0] {
+	case 0x16: // ^V
+		if len(data) == 1 {
+			if atEOF {
+				return 1, data[:1], nil
+			} else {
+				return 0, nil, nil
+			}
+		}
+		i, maxlen := 2, 4
+		if data[1] == 'x' {
+			maxlen = 4
+		} else if data[1] == 'u' {
+			maxlen = 6
+		} else if data[1] == 'U' {
+			maxlen = 10
+		} else {
+			return 1, data[:1], nil
+		}
+		for i < len(data) && i < maxlen && isHex(data[i]) {
+			i++
+		}
+		if i == len(data) && i < maxlen && !atEOF {
+			return 0, nil, nil
+		}
+		if i == 2 {
+			return 1, data[:1], nil
+		}
+		return i, data[:i], nil
+	case 0x1b: // ^[
+		if len(data) >= 3 && data[1] == '[' {
+			i := 2
+			for i < len(data) && ('0' <= data[i] && data[i] <= '9' || data[i] == ';') {
+				i++
+			}
+			if i < len(data) && ('A' <= data[i] && data[i] <= 'Z' || data[i] == '~') {
+				i++
+				return i, data[:i], nil
+			}
+		} else if len(data) >= 3 && data[1] == 'O' && ('A' <= data[2] && data[2] <= 'Z') {
+			return 3, data[:3], nil
+		}
+		return 1, data[:1], nil
+	default:
 		if !atEOF && !utf8.FullRune(data) {
 			return 0, nil, nil
 		}
 		_, n := utf8.DecodeRune(data)
 		return n, data[:n], nil
 	}
-	if len(data) >= 3 && data[1] == '[' {
-		i := 2
-		for i < len(data) && ('0' <= data[i] && data[i] <= '9' || data[i] == ';') {
-			i++
-		}
-		if i < len(data) && ('A' <= data[i] && data[i] <= 'Z' || data[i] == '~') {
-			return i + 1, data[:i+1], nil
-		}
-	} else if len(data) >= 3 && data[1] == 'O' && ('A' <= data[2] && data[2] <= 'Z') {
-		return 3, data[:3], nil
-	}
-	return 1, data[:1], nil
 }
 
 func tokenToAction(token []byte, inPaste bool) action {
@@ -378,7 +414,18 @@ func (r *reader) ReadRaw(ctx context.Context, prompt string, transformer Transfo
 		case actPasteEnd:
 			inPaste = false
 		case actQuotedInsert:
-			if scanner.Scan() {
+			if len(token) > 2 {
+				cp, err := strconv.ParseUint(string(token[2:]), 16, 32)
+				if err != nil {
+					token = token[1:]
+				} else if token[1] == 'x' {
+					token = []byte{byte(cp)}
+				} else {
+					buf := make([]byte, utf8.UTFMax)
+					n := utf8.EncodeRune(buf, rune(cp))
+					token = buf[:n]
+				}
+			} else if scanner.Scan() {
 				token = scanner.Bytes()
 			}
 			fallthrough
