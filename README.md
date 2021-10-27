@@ -2,7 +2,7 @@
 
 [![GitHub Releases](https://img.shields.io/github/v/release/cions/goenc?sort=semver)](https://github.com/cions/goenc/releases)
 [![LICENSE](https://img.shields.io/github/license/cions/goenc)](https://github.com/cions/goenc/blob/master/LICENSE)
-[![CI](https://github.com/cions/goenc/workflows/CI/badge.svg)](https://github.com/cions/goenc/actions)
+[![CI](https://github.com/cions/goenc/actions/workflows/ci.yml/badge.svg)](https://github.com/cions/goenc/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/cions/goenc.svg)](https://pkg.go.dev/github.com/cions/goenc)
 [![Go Report Card](https://goreportcard.com/badge/github.com/cions/goenc)](https://goreportcard.com/report/github.com/cions/goenc)
 
@@ -17,7 +17,7 @@ $ goenc [-d] [<input>] [<output>]
 Password can be passed by the environment variable *PASSWORD*.
 
 ```sh
-$ PASSWORD=<password> goenc <input> <output>
+$ PASSWORD=<password> goenc [-d] <input> <output>
 ```
 
 ## Installation
@@ -32,7 +32,8 @@ $ go install github.com/cions/goenc@latest
 
 ## Algorithm
 
-XChaCha20-Poly1305 with Argon2id for key-derivation
+- XChaCha20-Poly1305 for authenticated encryption
+- Argon2id for key derivation
 
 ## License
 
