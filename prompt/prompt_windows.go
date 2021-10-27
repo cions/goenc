@@ -1,6 +1,7 @@
 // Copyright (c) 2020-2021 cions
 // Licensed under the MIT License. See LICENSE for details
 
+//go:build windows
 // +build windows
 
 package prompt

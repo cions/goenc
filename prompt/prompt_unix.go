@@ -1,7 +1,8 @@
 // Copyright (c) 2020-2021 cions
 // Licensed under the MIT License. See LICENSE for details
 
-// +build darwin dragonfly freebsd linux netbsd openbsd solaris
+//go:build !windows
+// +build !windows
 
 package prompt
 
