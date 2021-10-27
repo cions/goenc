@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: write
+
 jobs:
   test:
     runs-on: ${{ matrix.os }}
@@ -32,8 +35,8 @@ jobs:
           AQgAAAAAABAABFkVTScVNMr2euF8TzNIyBSi8KfktCPlkskkRPzhVPA2ZAygHpLBt474YbWJARBs
           SCiNiIaQEflH3fALH7Cm4pWTgi43aP3QJL2Q
       run: |
-        echo -n "${PLAINTEXT}" > plaintext
-        echo -n "${ENCRYPTED}" | base64 -d > encrypted
+        printf "%s" "${PLAINTEXT}" > plaintext
+        printf "%s" "${ENCRYPTED}" | base64 -d > encrypted
         ./goenc -d encrypted decrypted
         cmp plaintext decrypted
 
@@ -47,13 +50,20 @@ jobs:
     needs: [test]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
 
+    outputs:
+      release-name: ${{ steps.create-release.outputs.release-name }}
+
     steps:
     - name: Checkout
       uses: actions/checkout@v2
-    - name: Create GitHub Release
+    - id: create-release
+      name: Create GitHub Release
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: gh release create --draft "${GITHUB_REF#refs/tags/}"
+      run: |
+        RELEASE_NAME="${GITHUB_REF#refs/tags/}"
+        gh release create --draft "${RELEASE_NAME}"
+        echo "::set-output name=release-name::${RELEASE_NAME}"
 
   upload-release:
     runs-on: ubuntu-latest
@@ -62,11 +72,12 @@ jobs:
 
     strategy:
       matrix:
-        GOOS: [windows, darwin, linux]
-        GOARCH: [amd64]
         include:
-        - GOOS: android
-          GOARCH: arm64
+        - { GOOS: windows, GOARCH: amd64 }
+        - { GOOS: darwin,  GOARCH: amd64 }
+        - { GOOS: darwin,  GOARCH: arm64 }
+        - { GOOS: linux,   GOARCH: amd64 }
+        - { GOOS: android, GOARCH: arm64 }
 
     steps:
     - name: Checkout
@@ -75,38 +86,37 @@ jobs:
       uses: actions/setup-go@v2
       with:
         go-version: '1.17'
-    - name: Build release assets
+    - id: build-release-asset
+      name: Build release asset
       env:
         CGO_ENABLED: '0'
         GOOS: ${{ matrix.GOOS }}
         GOARCH: ${{ matrix.GOARCH }}
-        GOHOSTOS: linux
-        GOHOSTARCH: amd64
       run: |
         go install -trimpath -ldflags "-s -w" "github.com/${GITHUB_REPOSITORY}@${GITHUB_REF#refs/tags/}"
 
-        ARTIFACT_DIR="goenc-${GOOS}-${GOARCH}-${GITHUB_REF#refs/tags/v}"
-        mkdir "${ARTIFACT_DIR}"
-        cp LICENSE README.md "${ARTIFACT_DIR}"
+        ASSET_DIR="goenc-${GOOS}-${GOARCH}-${GITHUB_REF#refs/tags/v}"
+        mkdir "${ASSET_DIR}"
+        cp LICENSE README.md "${ASSET_DIR}"
 
-        if [[ "${GOOS}/${GOARCH}" == "${GOHOSTOS}/${GOHOSTARCH}" ]]; then
+        if [[ "${GOOS}/${GOARCH}" == "$(go env GOHOSTOS)/$(go env GOHOSTARCH)" ]]; then
           GOBIN="$(go env GOPATH)/bin"
         else
           GOBIN="$(go env GOPATH)/bin/${GOOS}_${GOARCH}"
         fi
         GOEXE="$(go env GOEXE)"
-        cp "${GOBIN}/goenc${GOEXE}" "${ARTIFACT_DIR}"
-    - name: Upload release assets
+        cp "${GOBIN}/goenc${GOEXE}" "${ASSET_DIR}"
+
+        if [[ "${GOOS}" == "windows" ]]; then
+          zip "${ASSET_DIR}.zip" "${ASSET_DIR}"/*
+          echo "::set-output name=asset-name::${ASSET_DIR}.zip"
+        else
+          tar zcf "${ASSET_DIR}.tar.gz" "${ASSET_DIR}"
+          echo "::set-output name=asset-name::${ASSET_DIR}.tar.gz"
+        fi
+    - name: Upload release asset
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        GOOS: ${{ matrix.GOOS }}
-        GOARCH: ${{ matrix.GOARCH }}
-      run: |
-        ARTIFACT_DIR="goenc-${GOOS}-${GOARCH}-${GITHUB_REF#refs/tags/v}"
-        if [[ "${GOOS}" == "windows" ]]; then
-          zip "${ARTIFACT_DIR}.zip" "${ARTIFACT_DIR}"/*
-          gh release upload "${GITHUB_REF#refs/tags/}" "${ARTIFACT_DIR}.zip"
-        else
-          tar zcf "${ARTIFACT_DIR}.tar.gz" "${ARTIFACT_DIR}"
-          gh release upload "${GITHUB_REF#refs/tags/}" "${ARTIFACT_DIR}.tar.gz"
-        fi
+        RELEASE_NAME: ${{ needs.create-release.outputs.release-name }}
+        ASSET_NAME: ${{ steps.build-release-asset.outputs.asset-name }}
+      run: gh release upload "${RELEASE_NAME}" "${ASSET_NAME}"
