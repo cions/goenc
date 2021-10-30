@@ -16,17 +16,65 @@ import (
 	"syscall"
 	"unicode/utf8"
 
-	"golang.org/x/term"
 	"golang.org/x/text/width"
 )
 
 var (
-	mask   = []byte{'*'}
-	bs     = []byte{'\b'}
 	clreos = "\x1b[J"      // Clear to end of screen
 	ebp    = "\x1b[?2004h" // Enable Bracketed Paste Mode
 	dbp    = "\x1b[?2004l" // Disable Bracketed Paste Mode
 )
+
+// TransformFunc transform src into its display form and backspaces of its display width.
+type TransformFunc func(src []byte) (disp, bs []byte)
+
+// CaretNotation displays all control characters in the caret notation.
+func CaretNotation(src []byte) ([]byte, []byte) {
+	disp := make([]byte, 0, 2*len(src))
+	n := 0
+
+	for len(src) > 0 {
+		r, size := utf8.DecodeRune(src)
+		if r < 0x20 || r == 0x7f {
+			disp = append(disp, '^', byte(r)^0x40)
+			n += 2
+		} else {
+			disp = append(disp, src[:size]...)
+			switch width.LookupRune(r).Kind() {
+			case width.EastAsianWide, width.EastAsianFullwidth:
+				n += 2
+			default:
+				n += 1
+			}
+		}
+		src = src[size:]
+	}
+
+	return disp, bytes.Repeat([]byte{'\b'}, n)
+}
+
+// Masked displays all characters as asterisk.
+func Masked(src []byte) ([]byte, []byte) {
+	n := utf8.RuneCount(src)
+	return bytes.Repeat([]byte{'*'}, n), bytes.Repeat([]byte{'\b'}, n)
+}
+
+// Blanked displays nothing.
+func Blanked(src []byte) ([]byte, []byte) {
+	return []byte{}, []byte{}
+}
+
+// SignalError indicates the operation was interrupted by a signal.
+type SignalError syscall.Signal
+
+func (se SignalError) Error() string {
+	return syscall.Signal(se).String()
+}
+
+// Signal returns the signal number.
+func (se SignalError) Signal() int {
+	return int(se)
+}
 
 type action int
 
@@ -49,67 +97,6 @@ const (
 	actPasteStart
 	actPasteEnd
 )
-
-type SignalError struct {
-	sig syscall.Signal
-}
-
-func (se *SignalError) Error() string {
-	return se.sig.String()
-}
-
-func (se *SignalError) Signal() int {
-	return int(se.sig)
-}
-
-type contextReader struct {
-	ctx      context.Context
-	signalCh <-chan os.Signal
-	r        io.Reader
-}
-
-type readResult struct {
-	b   []byte
-	err error
-}
-
-func (cr *contextReader) Read(b []byte) (n int, err error) {
-	ch := make(chan readResult)
-	go func() {
-		bb := make([]byte, len(b))
-		n, err := cr.r.Read(bb)
-		select {
-		case <-cr.ctx.Done():
-			return
-		default:
-		}
-		ch <- readResult{b: bb[:n], err: err}
-	}()
-	select {
-	case sig := <-cr.signalCh:
-		if ssig, ok := sig.(syscall.Signal); ok {
-			return 0, &SignalError{sig: ssig}
-		}
-		return 0, errors.New("caught signal: " + sig.String())
-	case <-cr.ctx.Done():
-		return 0, cr.ctx.Err()
-	case retval := <-ch:
-		copy(b, retval.b)
-		return len(retval.b), retval.err
-	}
-}
-
-type tty interface {
-	io.Reader
-	io.Writer
-	io.Closer
-	MakeRaw() (*term.State, error)
-	Restore(*term.State) error
-}
-
-type reader struct {
-	tty
-}
 
 func isHex(b byte) bool {
 	return ('0' <= b && b <= '9') || ('A' <= b && b <= 'F') || ('a' <= b && b <= 'f')
@@ -260,155 +247,93 @@ func tokenToAction(token []byte, inPaste bool) action {
 	}
 }
 
-func NewReader() (*reader, error) {
-	tty, err := newTTY()
-	if err != nil {
-		return nil, err
-	}
-	return &reader{tty}, nil
-}
-
-type Transformer func(src []byte) (dst []byte, width int)
-
-func CaretNotation(b []byte) ([]byte, int) {
-	dst := make([]byte, len(b))
-	n := 0
-
-	for len(b) > 0 {
-		r, size := utf8.DecodeRune(b)
-		if r < 0x20 || r == 0x7f {
-			dst = append(dst, '^', byte(r)^0x40)
-			n += 2
-		} else {
-			dst = append(dst, b[:size]...)
-			switch width.LookupRune(r).Kind() {
-			case width.EastAsianWide, width.EastAsianFullwidth:
-				n += 2
-			default:
-				n += 1
-			}
-		}
-		b = b[size:]
-	}
-
-	return dst, n
-}
-
-func Masked(b []byte) ([]byte, int) {
-	n := utf8.RuneCount(b)
-	return bytes.Repeat(mask, n), n
-}
-
-func NoDisplay(b []byte) ([]byte, int) {
-	return []byte{}, 0
-}
-
-func (r *reader) ReadRaw(ctx context.Context, prompt string, transformer Transformer) ([]byte, error) {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	signalCh := make(chan os.Signal, 1)
-	signal.Notify(signalCh, syscall.SIGHUP, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
-	defer signal.Stop(signalCh)
-
-	scanner := bufio.NewScanner(&contextReader{ctx: ctx, signalCh: signalCh, r: r})
-	scanner.Split(scanToken)
-	password := make([]byte, 0, 256)
+func readLine(r io.Reader, w io.Writer, prompt string, transform TransformFunc) ([]byte, error) {
+	buffer := make([]byte, 0, 256)
 	pos := 0
 	inPaste := false
 
-	state, err := r.MakeRaw()
-	if err != nil {
+	if _, err := io.WriteString(w, "\r"+clreos+prompt+ebp); err != nil {
 		return nil, err
 	}
+
 	defer func() {
-		if pos < len(password) {
-			out, _ := transformer(password[pos:])
-			r.Write(out)
+		if pos < len(buffer) {
+			out, _ := transform(buffer[pos:])
+			w.Write(out)
 		}
-		io.WriteString(r, "\r\n"+dbp)
-		r.Restore(state)
+		io.WriteString(w, "\r\n"+dbp)
 	}()
 
-	if _, err := io.WriteString(r, "\r"+clreos+ebp+prompt); err != nil {
-		return nil, err
-	}
-
+	scanner := bufio.NewScanner(r)
+	scanner.Split(scanToken)
 	for scanner.Scan() {
 		token := scanner.Bytes()
 		switch action := tokenToAction(token, inPaste); action {
 		case actEOF:
-			return password, nil
+			return buffer, nil
 		case actSIGINT:
-			return nil, &SignalError{sig: syscall.SIGINT}
+			return nil, SignalError(syscall.SIGINT)
 		case actSIGQUIT:
-			return nil, &SignalError{sig: syscall.SIGQUIT}
+			return nil, SignalError(syscall.SIGQUIT)
 		case actBeginningOfLine:
 			if pos > 0 {
-				_, n := transformer(password[:pos])
-				r.Write(bytes.Repeat(bs, n))
+				_, bs := transform(buffer[:pos])
+				w.Write(bs)
 				pos = 0
 			}
 		case actEndOfLine:
-			if pos < len(password) {
-				out, _ := transformer(password[pos:])
-				r.Write(out)
-				pos = len(password)
+			if pos < len(buffer) {
+				out, _ := transform(buffer[pos:])
+				w.Write(out)
+				pos = len(buffer)
 			}
 		case actBackwardChar:
 			if pos > 0 {
-				_, n := utf8.DecodeLastRune(password[:pos])
-				_, m := transformer(password[pos-n : pos])
-				r.Write(bytes.Repeat(bs, m))
+				_, n := utf8.DecodeLastRune(buffer[:pos])
+				_, bs := transform(buffer[pos-n : pos])
+				w.Write(bs)
 				pos -= n
 			}
 		case actForwardChar:
-			if pos < len(password) {
-				_, n := utf8.DecodeRune(password[pos:])
-				out, _ := transformer(password[pos : pos+n])
-				r.Write(out)
+			if pos < len(buffer) {
+				_, n := utf8.DecodeRune(buffer[pos:])
+				out, _ := transform(buffer[pos : pos+n])
+				w.Write(out)
 				pos += n
 			}
 		case actDeleteBackwardChar:
 			if pos > 0 {
-				_, n := utf8.DecodeLastRune(password[:pos])
-				_, m := transformer(password[pos-n : pos])
-				copy(password[pos-n:], password[pos:])
-				password = password[:len(password)-n]
+				_, n := utf8.DecodeLastRune(buffer[:pos])
+				_, bs := transform(buffer[pos-n : pos])
+				copy(buffer[pos-n:], buffer[pos:])
+				buffer = buffer[:len(buffer)-n]
 				pos -= n
-				r.Write(bytes.Repeat(bs, m))
-				out, n := transformer(password[pos:])
-				r.Write(out)
-				io.WriteString(r, clreos)
-				r.Write(bytes.Repeat(bs, n))
+				w.Write(bs)
+				out, bs := transform(buffer[pos:])
+				w.Write(append(append(out, clreos...), bs...))
 			}
 		case actDeleteForwardChar:
-			if pos < len(password) {
-				_, n := utf8.DecodeRune(password[pos:])
-				copy(password[pos:], password[pos+n:])
-				password = password[:len(password)-n]
-				out, n := transformer(password[pos:])
-				r.Write(out)
-				io.WriteString(r, clreos)
-				r.Write(bytes.Repeat(bs, n))
+			if pos < len(buffer) {
+				_, n := utf8.DecodeRune(buffer[pos:])
+				copy(buffer[pos:], buffer[pos+n:])
+				buffer = buffer[:len(buffer)-n]
+				out, bs := transform(buffer[pos:])
+				w.Write(append(append(out, clreos...), bs...))
 			}
 		case actKillLine:
-			password = password[:pos]
-			io.WriteString(r, clreos)
+			buffer = buffer[:pos]
+			io.WriteString(w, clreos)
 		case actKillWholeLine:
-			_, n := transformer(password[:pos])
-			r.Write(bytes.Repeat(bs, n))
-			io.WriteString(r, clreos)
-			password = password[:0]
+			_, bs := transform(buffer[:pos])
+			w.Write(append(bs, clreos...))
+			buffer = buffer[:0]
 			pos = 0
 		case actRefresh:
-			_, n := transformer(password[:pos])
-			r.Write(bytes.Repeat(bs, n))
-			io.WriteString(r, "\r"+clreos+prompt)
-			out, _ := transformer(password)
-			r.Write(out)
-			_, n = transformer(password[pos:])
-			r.Write(bytes.Repeat(bs, n))
+			_, bs := transform(buffer[:pos])
+			w.Write(append(bs, ("\r" + clreos + prompt)...))
+			out, _ := transform(buffer)
+			_, bs = transform(buffer[pos:])
+			w.Write(append(out, bs...))
 		case actPasteStart:
 			inPaste = true
 		case actPasteEnd:
@@ -430,46 +355,104 @@ func (r *reader) ReadRaw(ctx context.Context, prompt string, transformer Transfo
 			}
 			fallthrough
 		case actInsertChar:
-			if pos == len(password) {
-				password = append(password, token...)
-				pos = len(password)
-				out, _ := transformer(token)
-				r.Write(out)
+			if pos == len(buffer) {
+				buffer = append(buffer, token...)
+				pos = len(buffer)
+				out, _ := transform(token)
+				w.Write(out)
 			} else {
-				newlen := len(password) + len(token)
-				if newlen > cap(password) {
+				newlen := len(buffer) + len(token)
+				if newlen > cap(buffer) {
 					newPassword := make([]byte, 2*newlen)
-					copy(newPassword, password)
-					password = newPassword
+					copy(newPassword, buffer)
+					buffer = newPassword
 				}
-				password = password[:newlen]
-				copy(password[pos+len(token):], password[pos:])
-				copy(password[pos:], token)
+				buffer = buffer[:newlen]
+				copy(buffer[pos+len(token):], buffer[pos:])
+				copy(buffer[pos:], token)
 				pos += len(token)
-				out, _ := transformer(token)
-				r.Write(out)
-				out, n := transformer(password[pos:])
-				r.Write(out)
-				io.WriteString(r, clreos)
-				r.Write(bytes.Repeat(bs, n))
+				out, _ := transform(token)
+				w.Write(out)
+				out, bs := transform(buffer[pos:])
+				w.Write(append(append(out, clreos...), bs...))
 			}
 		}
 	}
-
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
-	return password, nil
+	return buffer, nil
+
 }
 
-func (r *reader) ReadString(ctx context.Context, prompt string) ([]byte, error) {
-	return r.ReadRaw(ctx, prompt, CaretNotation)
+type readerFunc func(p []byte) (int, error)
+
+func (f readerFunc) Read(p []byte) (int, error) {
+	return f(p)
 }
 
-func (r *reader) ReadPassword(ctx context.Context, prompt string) ([]byte, error) {
-	return r.ReadRaw(ctx, prompt, Masked)
+type readResult struct {
+	p   []byte
+	err error
 }
 
-func (r *reader) ReadNoEcho(ctx context.Context, prompt string) ([]byte, error) {
-	return r.ReadRaw(ctx, prompt, NoDisplay)
+// ReadString reads a line of input from the terminal with custom transform function.
+func (t *Terminal) ReadRaw(ctx context.Context, prompt string, transform TransformFunc) ([]byte, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	signalCh := make(chan os.Signal, 1)
+	signal.Notify(signalCh, syscall.SIGHUP, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
+	defer signal.Stop(signalCh)
+
+	r := readerFunc(func(p []byte) (int, error) {
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+
+		ch := make(chan readResult)
+		go func() {
+			defer close(ch)
+			b := make([]byte, len(p))
+			n, err := t.ReadContext(ctx, b)
+			select {
+			case <-ctx.Done():
+			case ch <- readResult{p: b[:n], err: err}:
+			}
+		}()
+
+		select {
+		case sig := <-signalCh:
+			if ssig, ok := sig.(syscall.Signal); ok {
+				return 0, SignalError(ssig)
+			}
+			return 0, errors.New("caught signal: " + sig.String())
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case result := <-ch:
+			return copy(p, result.p), result.err
+		}
+	})
+
+	err := t.MakeRaw()
+	if err != nil {
+		return nil, err
+	}
+	defer t.Restore()
+
+	return readLine(r, t, prompt, transform)
+}
+
+// ReadString reads a line of input from the terminal.
+func (t *Terminal) ReadString(ctx context.Context, prompt string) ([]byte, error) {
+	return t.ReadRaw(ctx, prompt, CaretNotation)
+}
+
+// ReadPassword reads a line of input from the terminal with masking.
+func (t *Terminal) ReadPassword(ctx context.Context, prompt string) ([]byte, error) {
+	return t.ReadRaw(ctx, prompt, Masked)
+}
+
+// ReadNoEcho reads a line of input from the terminal without local echo.
+func (t *Terminal) ReadNoEcho(ctx context.Context, prompt string) ([]byte, error) {
+	return t.ReadRaw(ctx, prompt, Blanked)
 }

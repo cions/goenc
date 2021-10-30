@@ -7,18 +7,20 @@
 package prompt
 
 import (
+	"context"
 	"os"
 
 	"golang.org/x/sys/windows"
-	"golang.org/x/term"
 )
 
-type windowsTTY struct {
+// Terminal represents an local terminal.
+type Terminal struct {
 	conin, conout   *os.File
 	inMode, outMode uint32
 }
 
-func newTTY() (tty, error) {
+// NewTerminal returns the Terminal.
+func NewTerminal() (*Terminal, error) {
 	conin, err := os.OpenFile("CONIN$", os.O_RDWR, 0)
 	if err != nil {
 		return nil, err
@@ -30,18 +32,34 @@ func newTTY() (tty, error) {
 		return nil, err
 	}
 
-	return &windowsTTY{conin: conin, conout: conout}, nil
+	return &Terminal{conin: conin, conout: conout}, nil
 }
 
-func (t *windowsTTY) Read(b []byte) (int, error) {
-	return t.conin.Read(b)
+// Read reads up to len(p) bytes from the terminal.
+func (t *Terminal) Read(p []byte) (int, error) {
+	return t.conin.Read(p)
 }
 
-func (t *windowsTTY) Write(b []byte) (int, error) {
-	return t.conout.Write(b)
+// Read reads up to len(p) bytes from the terminal. If the context expires
+// before reading any data, ReadContext returns the context's error,
+func (t *Terminal) ReadContext(ctx context.Context, p []byte) (int, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	go func() {
+		<-ctx.Done()
+		windows.CancelIoEx(windows.Handle(t.conin.Fd()), nil)
+	}()
+	return t.conin.Read(p)
 }
 
-func (t *windowsTTY) Close() error {
+// Write writes len(p) bytes to the terminal.
+func (t *Terminal) Write(p []byte) (int, error) {
+	return t.conout.Write(p)
+}
+
+// Close closes the terminal.
+func (t *Terminal) Close() error {
 	err1 := t.conin.Close()
 	err2 := t.conout.Close()
 	if err1 != nil {
@@ -50,32 +68,36 @@ func (t *windowsTTY) Close() error {
 	return err2
 }
 
-func (t *windowsTTY) MakeRaw() (*term.State, error) {
+// MakeRaw puts the terminal into raw mode.
+func (t *Terminal) MakeRaw() error {
 	if err := windows.GetConsoleMode(windows.Handle(t.conin.Fd()), &t.inMode); err != nil {
-		return nil, err
+		return err
 	}
 
-	var mode uint32 = windows.ENABLE_VIRTUAL_TERMINAL_INPUT
-	if err := windows.SetConsoleMode(windows.Handle(t.conin.Fd()), mode); err != nil {
-		return nil, err
+	var inMode uint32
+	inMode |= windows.ENABLE_VIRTUAL_TERMINAL_INPUT
+	if err := windows.SetConsoleMode(windows.Handle(t.conin.Fd()), inMode); err != nil {
+		return err
 	}
 
 	if err := windows.GetConsoleMode(windows.Handle(t.conout.Fd()), &t.outMode); err != nil {
-		return nil, err
+		return err
 	}
 
-	mode = windows.ENABLE_PROCESSED_OUTPUT
-	mode |= windows.ENABLE_WRAP_AT_EOL_OUTPUT
-	mode |= windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING
-	mode |= windows.DISABLE_NEWLINE_AUTO_RETURN
-	if err := windows.SetConsoleMode(windows.Handle(t.conout.Fd()), mode); err != nil {
-		return nil, err
+	var outMode uint32
+	outMode |= windows.ENABLE_PROCESSED_OUTPUT
+	outMode |= windows.ENABLE_WRAP_AT_EOL_OUTPUT
+	outMode |= windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING
+	outMode |= windows.DISABLE_NEWLINE_AUTO_RETURN
+	if err := windows.SetConsoleMode(windows.Handle(t.conout.Fd()), outMode); err != nil {
+		return err
 	}
 
-	return nil, nil
+	return nil
 }
 
-func (t *windowsTTY) Restore(oldState *term.State) error {
+// Restore restores the terminal to the state prior to calling MakeRaw.
+func (t *Terminal) Restore() error {
 	if err := windows.SetConsoleMode(windows.Handle(t.conin.Fd()), t.inMode); err != nil {
 		return err
 	}

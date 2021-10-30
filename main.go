@@ -36,19 +36,19 @@ func getPassword(confirm bool) ([]byte, error) {
 		return []byte(val), nil
 	}
 
-	reader, err := prompt.NewReader()
+	terminal, err := prompt.NewTerminal()
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
+	defer terminal.Close()
 
-	password, err := reader.ReadPassword(context.Background(), "Password: ")
+	password, err := terminal.ReadPassword(context.Background(), "Password: ")
 	if err != nil {
 		return nil, err
 	}
 
 	if confirm {
-		confirmPassword, err := reader.ReadPassword(context.Background(), "Confirm Password: ")
+		confirmPassword, err := terminal.ReadPassword(context.Background(), "Confirm Password: ")
 		if err != nil {
 			return nil, err
 		}
@@ -247,7 +247,7 @@ func main() {
 		}
 	}
 	if err != nil {
-		if se, ok := err.(*prompt.SignalError); ok {
+		if se, ok := err.(prompt.SignalError); ok {
 			os.Exit(128 + se.Signal())
 		}
 		fmt.Fprintf(os.Stderr, "goenc: error: %v\n", err)
