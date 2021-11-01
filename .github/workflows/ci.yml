@@ -25,7 +25,7 @@ jobs:
     - name: Build
       env:
         CGO_ENABLED: '0'
-      run: go build -v
+      run: go build -v ./cmd/goenc
     - name: Test
       shell: bash
       env:
@@ -93,7 +93,7 @@ jobs:
         GOOS: ${{ matrix.GOOS }}
         GOARCH: ${{ matrix.GOARCH }}
       run: |
-        go install -trimpath -ldflags "-s -w" "github.com/${GITHUB_REPOSITORY}@${GITHUB_REF#refs/tags/}"
+        go install -trimpath -ldflags "-s -w" "github.com/${GITHUB_REPOSITORY}/cmd/goenc@${GITHUB_REF#refs/tags/}"
 
         ASSET_DIR="goenc-${GOOS}-${GOARCH}-${GITHUB_REF#refs/tags/v}"
         mkdir "${ASSET_DIR}"

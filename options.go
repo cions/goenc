@@ -1,7 +1,7 @@
 // Copyright (c) 2020-2021 cions
 // Licensed under the MIT License. See LICENSE for details
 
-package main
+package goenc
 
 import (
 	"errors"
@@ -21,10 +21,11 @@ Options:
  -t, --time=N           Argon2 time parameter (default: 8)
  -m, --memory=N[kMG]    Argon2 memory parameter (default: 1G)
  -p, --parallelism=N    Argon2 parallelism parameter (default: 4)
+ -r, --retries=N        Maximum number of attempts to input password (default: 3)
  -h, --help             Show this help message and exit
      --version          Show version information and exit
 
-Environment Variable:
+Environment Variables:
   PASSWORD              Encryption password
 
 Exit Status:
@@ -47,6 +48,7 @@ type options struct {
 	Time      uint32
 	Memory    uint32
 	Threads   uint8
+	Retries   uint8
 	Input     string
 	Output    string
 }
@@ -64,6 +66,8 @@ var takeValue = map[string]bool{
 	"--memory":      true,
 	"-p":            true,
 	"--parallelism": true,
+	"-r":            true,
+	"--retries":     true,
 	"-h":            false,
 	"--help":        false,
 	"--version":     false,
@@ -76,6 +80,7 @@ func parseArgs(args []string) (*options, error) {
 		Time:      8,
 		Memory:    1 * 1024 * 1024,
 		Threads:   4,
+		Retries:   3,
 		Input:     "-",
 		Output:    "-",
 	}
@@ -153,6 +158,9 @@ func parseArgs(args []string) (*options, error) {
 				}
 				return nil, fmt.Errorf("option %s: %w", name, err)
 			}
+			if v == 0 {
+				return nil, fmt.Errorf("option %s: value out of range", name)
+			}
 			opts.Time = uint32(v)
 		case "-m", "--memory":
 			unit := uint64(1)
@@ -190,7 +198,25 @@ func parseArgs(args []string) (*options, error) {
 				}
 				return nil, fmt.Errorf("option %s: %w", name, err)
 			}
+			if v == 0 {
+				return nil, fmt.Errorf("option %s: value out of range", name)
+			}
 			opts.Threads = uint8(v)
+		case "-r", "--retries":
+			v, err := strconv.ParseUint(value, 10, 8)
+			if err != nil {
+				if errors.Is(err, strconv.ErrSyntax) {
+					return nil, fmt.Errorf("option %s expects a number", name)
+				}
+				if errors.Is(err, strconv.ErrRange) {
+					return nil, fmt.Errorf("option %s: value out of range", name)
+				}
+				return nil, fmt.Errorf("option %s: %w", name, err)
+			}
+			if v == 0 {
+				return nil, fmt.Errorf("option %s: value out of range", name)
+			}
+			opts.Retries = uint8(v)
 		case "-h", "--help":
 			opts.Operation = opHelp
 			return opts, nil

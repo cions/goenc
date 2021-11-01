@@ -27,7 +27,7 @@ $ PASSWORD=<password> goenc [-d] <input> <output>
 ### Build from source
 
 ```sh
-$ go install github.com/cions/goenc@latest
+$ go install github.com/cions/goenc/cmd/goenc@latest
 ```
 
 ## Algorithm
