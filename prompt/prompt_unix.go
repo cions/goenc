@@ -54,7 +54,7 @@ func (t *Terminal) Read(p []byte) (int, error) {
 	return ignoringEINTRIO(unix.Read, t.fd, p)
 }
 
-// Read reads up to len(p) bytes from the terminal. If the context expires
+// ReadContext reads up to len(p) bytes from the terminal. If the context expires
 // before reading any data, ReadContext returns the context's error,
 func (t *Terminal) ReadContext(ctx context.Context, p []byte) (int, error) {
 	ctx, cancel := context.WithCancel(ctx)

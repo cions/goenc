@@ -110,13 +110,13 @@ func scanToken(data []byte, atEOF bool) (int, []byte, error) {
 	switch data[0] {
 	case 0x16: // ^V
 		if len(data) == 1 {
-			if atEOF {
-				return 1, data[:1], nil
-			} else {
+			if !atEOF {
 				return 0, nil, nil
 			}
+			return 1, data[:1], nil
 		}
-		i, maxlen := 2, 4
+		i := 2
+		var maxlen int
 		if data[1] == 'x' {
 			maxlen = 4
 		} else if data[1] == 'u' {
@@ -396,7 +396,7 @@ type readResult struct {
 	err error
 }
 
-// ReadString reads a line of input from the terminal with custom transform function.
+// ReadRaw reads a line of input from the terminal with custom transform function.
 func (t *Terminal) ReadRaw(ctx context.Context, prompt string, transform TransformFunc) ([]byte, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()

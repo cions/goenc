@@ -73,6 +73,9 @@ func encrypt(opts *options) error {
 	}
 
 	header, ciphertext, err := encryptV1(password, plaintext, opts)
+	if err != nil {
+		return err
+	}
 
 	var w io.Writer = os.Stdout
 	if opts.Output != "-" {
