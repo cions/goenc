@@ -278,27 +278,35 @@ func readLine(r io.Reader, w io.Writer, prompt string, transform TransformFunc) 
 		case actBeginningOfLine:
 			if pos > 0 {
 				_, bs := transform(buffer[:pos])
-				w.Write(bs)
+				if _, err := w.Write(bs); err != nil {
+					return nil, err
+				}
 				pos = 0
 			}
 		case actEndOfLine:
 			if pos < len(buffer) {
 				out, _ := transform(buffer[pos:])
-				w.Write(out)
+				if _, err := w.Write(out); err != nil {
+					return nil, err
+				}
 				pos = len(buffer)
 			}
 		case actBackwardChar:
 			if pos > 0 {
 				_, n := utf8.DecodeLastRune(buffer[:pos])
 				_, bs := transform(buffer[pos-n : pos])
-				w.Write(bs)
+				if _, err := w.Write(bs); err != nil {
+					return nil, err
+				}
 				pos -= n
 			}
 		case actForwardChar:
 			if pos < len(buffer) {
 				_, n := utf8.DecodeRune(buffer[pos:])
 				out, _ := transform(buffer[pos : pos+n])
-				w.Write(out)
+				if _, err := w.Write(out); err != nil {
+					return nil, err
+				}
 				pos += n
 			}
 		case actDeleteBackwardChar:
@@ -308,9 +316,13 @@ func readLine(r io.Reader, w io.Writer, prompt string, transform TransformFunc) 
 				copy(buffer[pos-n:], buffer[pos:])
 				buffer = buffer[:len(buffer)-n]
 				pos -= n
-				w.Write(bs)
+				if _, err := w.Write(bs); err != nil {
+					return nil, err
+				}
 				out, bs := transform(buffer[pos:])
-				w.Write(append(append(out, clreos...), bs...))
+				if _, err := w.Write(append(append(out, clreos...), bs...)); err != nil {
+					return nil, err
+				}
 			}
 		case actDeleteForwardChar:
 			if pos < len(buffer) {
@@ -318,22 +330,32 @@ func readLine(r io.Reader, w io.Writer, prompt string, transform TransformFunc) 
 				copy(buffer[pos:], buffer[pos+n:])
 				buffer = buffer[:len(buffer)-n]
 				out, bs := transform(buffer[pos:])
-				w.Write(append(append(out, clreos...), bs...))
+				if _, err := w.Write(append(append(out, clreos...), bs...)); err != nil {
+					return nil, err
+				}
 			}
 		case actKillLine:
 			buffer = buffer[:pos]
-			io.WriteString(w, clreos)
+			if _, err := io.WriteString(w, clreos); err != nil {
+				return nil, err
+			}
 		case actKillWholeLine:
 			_, bs := transform(buffer[:pos])
-			w.Write(append(bs, clreos...))
+			if _, err := w.Write(append(bs, clreos...)); err != nil {
+				return nil, err
+			}
 			buffer = buffer[:0]
 			pos = 0
 		case actRefresh:
 			_, bs := transform(buffer[:pos])
-			w.Write(append(bs, ("\r" + clreos + prompt)...))
+			if _, err := w.Write(append(bs, ("\r" + clreos + prompt)...)); err != nil {
+				return nil, err
+			}
 			out, _ := transform(buffer)
 			_, bs = transform(buffer[pos:])
-			w.Write(append(out, bs...))
+			if _, err := w.Write(append(out, bs...)); err != nil {
+				return nil, err
+			}
 		case actPasteStart:
 			inPaste = true
 		case actPasteEnd:
@@ -359,7 +381,9 @@ func readLine(r io.Reader, w io.Writer, prompt string, transform TransformFunc) 
 				buffer = append(buffer, token...)
 				pos = len(buffer)
 				out, _ := transform(token)
-				w.Write(out)
+				if _, err := w.Write(out); err != nil {
+					return nil, err
+				}
 			} else {
 				newlen := len(buffer) + len(token)
 				if newlen > cap(buffer) {
@@ -372,9 +396,13 @@ func readLine(r io.Reader, w io.Writer, prompt string, transform TransformFunc) 
 				copy(buffer[pos:], token)
 				pos += len(token)
 				out, _ := transform(token)
-				w.Write(out)
+				if _, err := w.Write(out); err != nil {
+					return nil, err
+				}
 				out, bs := transform(buffer[pos:])
-				w.Write(append(append(out, clreos...), bs...))
+				if _, err := w.Write(append(append(out, clreos...), bs...)); err != nil {
+					return nil, err
+				}
 			}
 		}
 	}
