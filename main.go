@@ -118,13 +118,13 @@ func decrypt(opts *options) error {
 		return io.ErrUnexpectedEOF
 	}
 
-	var f func([]byte, []byte, *options) ([]byte, error)
+	var decrypt func([]byte, []byte, *options) ([]byte, error)
 	switch input[0] {
 	case 0x01:
 		if len(input) < minSizeV1 {
 			return io.ErrUnexpectedEOF
 		}
-		f = decryptV1
+		decrypt = decryptV1
 	default:
 		return errors.New("invalid file format")
 	}
@@ -132,7 +132,7 @@ func decrypt(opts *options) error {
 	var plaintext []byte
 	if value, ok := os.LookupEnv("PASSWORD"); ok {
 		password := []byte(value)
-		plaintext, err = f(password, input, opts)
+		plaintext, err = decrypt(password, input, opts)
 		if err != nil {
 			return err
 		}
@@ -149,7 +149,7 @@ func decrypt(opts *options) error {
 			if err != nil {
 				return err
 			}
-			plaintext, err = f(password, input, opts)
+			plaintext, err = decrypt(password, input, opts)
 			if errors.Is(err, ErrInvalidTag) && tries < opts.Retries {
 				fmt.Fprintf(os.Stderr, "goenc: error: incorrect password. try again.\n")
 				tries++
