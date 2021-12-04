@@ -49,7 +49,7 @@ func encrypt(opts *options) error {
 			if bytes.Equal(password, confirmPassword) {
 				break
 			} else if tries < opts.Retries {
-				fmt.Fprintf(os.Stderr, "goenc: error: passwords does not match. try again.\n")
+				fmt.Fprintln(terminal, "goenc: error: passwords does not match. try again.")
 				tries++
 				continue
 			} else {
@@ -151,7 +151,7 @@ func decrypt(opts *options) error {
 			}
 			plaintext, err = decrypt(password, input, opts)
 			if errors.Is(err, ErrInvalidTag) && tries < opts.Retries {
-				fmt.Fprintf(os.Stderr, "goenc: error: incorrect password. try again.\n")
+				fmt.Fprintln(terminal, "goenc: error: incorrect password. try again.")
 				tries++
 				continue
 			} else if err != nil {
