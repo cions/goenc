@@ -72,7 +72,7 @@ func encrypt(opts *options) error {
 		return err
 	}
 
-	header, ciphertext, err := encryptV1(password, plaintext, opts)
+	ciphertext, err := encryptV1(password, plaintext, opts)
 	if err != nil {
 		return err
 	}
@@ -89,9 +89,6 @@ func encrypt(opts *options) error {
 		}
 		defer fh.Close()
 		w = fh
-	}
-	if _, err := w.Write(header); err != nil {
-		return err
 	}
 	if _, err := w.Write(ciphertext); err != nil {
 		return err
@@ -118,13 +115,13 @@ func decrypt(opts *options) error {
 		return io.ErrUnexpectedEOF
 	}
 
-	var decrypt func([]byte, []byte, *options) ([]byte, error)
+	var decryptor func([]byte, []byte, *options) ([]byte, error)
 	switch input[0] {
 	case 0x01:
 		if len(input) < minSizeV1 {
 			return io.ErrUnexpectedEOF
 		}
-		decrypt = decryptV1
+		decryptor = decryptV1
 	default:
 		return errors.New("invalid file format")
 	}
@@ -132,7 +129,7 @@ func decrypt(opts *options) error {
 	var plaintext []byte
 	if value, ok := os.LookupEnv("PASSWORD"); ok {
 		password := []byte(value)
-		plaintext, err = decrypt(password, input, opts)
+		plaintext, err = decryptor(password, input, opts)
 		if err != nil {
 			return err
 		}
@@ -149,7 +146,7 @@ func decrypt(opts *options) error {
 			if err != nil {
 				return err
 			}
-			plaintext, err = decrypt(password, input, opts)
+			plaintext, err = decryptor(password, input, opts)
 			if errors.Is(err, ErrInvalidTag) && tries < opts.Retries {
 				fmt.Fprintln(terminal, "goenc: error: incorrect password. try again.")
 				tries++

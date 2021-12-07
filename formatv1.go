@@ -18,31 +18,29 @@ const (
 	minSizeV1    = headerSizeV1 + nonceSizeV1 + chacha20poly1305.Overhead
 )
 
-func encryptV1(password, plaintext []byte, opts *options) ([]byte, []byte, error) {
-	header := make([]byte, headerSizeV1+nonceSizeV1)
+func encryptV1(password, plaintext []byte, opts *options) ([]byte, error) {
+	buf := make([]byte, minSizeV1+len(plaintext))
+	header := buf[:headerSizeV1]
 	header[0] = 0x01
 	binary.LittleEndian.PutUint32(header[1:5], opts.Time)
 	binary.LittleEndian.PutUint32(header[5:9], opts.Memory)
 	header[9] = opts.Threads
-	if _, err := rand.Read(header[10:]); err != nil {
-		return nil, nil, err
+	if _, err := rand.Read(header[10:headerSizeV1]); err != nil {
+		return nil, err
 	}
 	salt := header[10:headerSizeV1]
-	nonce := header[headerSizeV1:]
+	if _, err := rand.Read(buf[headerSizeV1 : headerSizeV1+nonceSizeV1]); err != nil {
+		return nil, err
+	}
+	nonce := buf[headerSizeV1 : headerSizeV1+nonceSizeV1]
+	dst := buf[:headerSizeV1+nonceSizeV1]
 
 	key := argon2.IDKey(password, salt, opts.Time, opts.Memory, opts.Threads, chacha20poly1305.KeySize)
 	aead, err := chacha20poly1305.NewX(key)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-
-	var dst []byte
-	if len(plaintext)+aead.Overhead() <= cap(plaintext) {
-		dst = plaintext[:0]
-	}
-	ciphertext := aead.Seal(dst, nonce, plaintext, header[:headerSizeV1])
-
-	return header, ciphertext, nil
+	return aead.Seal(dst, nonce, plaintext, header), nil
 }
 
 func decryptV1(password, input []byte, opts *options) ([]byte, error) {
@@ -50,7 +48,7 @@ func decryptV1(password, input []byte, opts *options) ([]byte, error) {
 	time := binary.LittleEndian.Uint32(header[1:5])
 	memory := binary.LittleEndian.Uint32(header[5:9])
 	threads := header[9]
-	salt := header[10:]
+	salt := header[10:headerSizeV1]
 	nonce := input[headerSizeV1 : headerSizeV1+nonceSizeV1]
 	ciphertext := input[headerSizeV1+nonceSizeV1:]
 
@@ -59,7 +57,6 @@ func decryptV1(password, input []byte, opts *options) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	plaintext, err := aead.Open(nil, nonce, ciphertext, header)
 	if err != nil {
 		return nil, ErrInvalidTag
