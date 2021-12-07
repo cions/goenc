@@ -15,15 +15,15 @@ const helpMessage = `usage: goenc [options] [input] [output]
 A simple file encryption tool
 
 Options:
- -e, --encrypt          Encrypt
- -d, --decrypt          Decrypt
- -n, --no-clobber       Do not overwrite an existing file
- -t, --time=N           Argon2 time parameter (default: 8)
- -m, --memory=N[kMG]    Argon2 memory parameter (default: 1G)
- -p, --parallelism=N    Argon2 parallelism parameter (default: 4)
- -r, --retries=N        Maximum number of attempts to input password (default: 3)
- -h, --help             Show this help message and exit
-     --version          Show version information and exit
+  -e, --encrypt         Encrypt
+  -d, --decrypt         Decrypt
+  -n, --no-clobber      Do not overwrite an existing file
+  -t, --time=N          Argon2 time parameter (default: 8)
+  -m, --memory=N[kMG]   Argon2 memory parameter (default: 1G)
+  -p, --parallelism=N   Argon2 parallelism parameter (default: 4)
+  -r, --retries=N       Maximum number of attempts to input password (default: 3)
+  -h, --help            Show this help message and exit
+      --version         Show version information and exit
 
 Environment Variables:
   PASSWORD              Encryption password
