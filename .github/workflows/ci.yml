@@ -38,12 +38,12 @@ jobs:
         printf "%s" "${PLAINTEXT}" > plaintext
         printf "%s" "${ENCRYPTED}" | base64 -d > encrypted
         ./goenc -d encrypted decrypted
-        cmp plaintext decrypted
+        diff -q plaintext decrypted
 
         openssl rand -out plaintext2 2048
         ./goenc plaintext2 encrypted2
         ./goenc -d encrypted2 decrypted2
-        cmp plaintext2 decrypted2
+        diff -q plaintext2 decrypted2
 
   create-release:
     runs-on: ubuntu-latest

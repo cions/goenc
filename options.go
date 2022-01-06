@@ -1,4 +1,4 @@
-// Copyright (c) 2020-2021 cions
+// Copyright (c) 2020-2022 cions
 // Licensed under the MIT License. See LICENSE for details
 
 package goenc
@@ -30,7 +30,7 @@ Environment Variables:
 
 Exit Status:
   0  Operation was successful
-  1  Message authentication failed (password is wrong or data is corrupted)
+  1  Tag verification failed (password is wrong or data is corrupted)
   2  An error occurred`
 
 type operation int

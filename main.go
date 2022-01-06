@@ -1,4 +1,4 @@
-// Copyright (c) 2020-2021 cions
+// Copyright (c) 2020-2022 cions
 // Licensed under the MIT License. See LICENSE for details
 
 package goenc
@@ -16,7 +16,8 @@ import (
 	"github.com/cions/goenc/prompt"
 )
 
-var ErrInvalidTag = errors.New("message authentication failed (password is wrong or data is corrupted)")
+// ErrInvalidTag if tag verification failed
+var ErrInvalidTag = errors.New("tag verification failed (password is wrong or data is corrupted)")
 
 func getVersion() string {
 	if bi, ok := debug.ReadBuildInfo(); ok {
@@ -179,6 +180,7 @@ func decrypt(opts *options) error {
 	return nil
 }
 
+// Main runs the command
 func Main(args []string) error {
 	opts, err := parseArgs(args[1:])
 	if err != nil {
