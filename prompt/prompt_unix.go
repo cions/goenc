@@ -1,4 +1,4 @@
-// Copyright (c) 2020-2022 cions
+// Copyright (c) 2020-2023 cions
 // Licensed under the MIT License. See LICENSE for details
 
 //go:build aix || darwin || dragonfly || freebsd || illumos || linux || netbsd || openbsd || solaris
