@@ -1,204 +1,126 @@
 // Copyright (c) 2020-2023 cions
-// Licensed under the MIT License. See LICENSE for details
+// Licensed under the MIT License. See LICENSE for details.
 
 package goenc
 
 import (
-	"bytes"
-	"context"
+	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"runtime"
-	"runtime/debug"
 
-	"github.com/cions/goenc/prompt"
+	"golang.org/x/crypto/argon2"
+	"golang.org/x/crypto/chacha20poly1305"
 )
 
-// ErrInvalidTag if tag verification failed
-var ErrInvalidTag = errors.New("tag verification failed (password is wrong or data is corrupted)")
+var (
+	ErrFormat     = errors.New("not a valid goenc file")
+	ErrInvalidTag = errors.New("tag verification failed (password is wrong or data is corrupted)")
+)
 
-func getVersion() string {
-	if bi, ok := debug.ReadBuildInfo(); ok {
-		return bi.Main.Version
-	}
-	return "(devel)"
+// Format represents the file format.
+type Format int
+
+const (
+	// FormatDefault indicates that the format is not specified.
+	FormatDefault Format = iota
+
+	// FormatV1 represents the goenc version 1 format.
+	//
+	// Version 1 format uses XChaCha20-Poly1305 for authenticated encryption and Argon2id for key derivation.
+	FormatV1
+)
+
+// Options are encryption parameters.
+type Options struct {
+	Format  Format // File format
+	Time    uint32 // KDF time parameter
+	Memory  uint32 // KDF memory parameter
+	Threads uint8  // KDF parallelism parameter
 }
 
-func encrypt(opts *options) error {
-	var password []byte
-	if value, ok := os.LookupEnv("PASSWORD"); ok {
-		password = []byte(value)
-	} else {
-		terminal, err := prompt.NewTerminal()
-		if err != nil {
-			return err
-		}
-		defer terminal.Close()
-
-		var tries uint8 = 1
-		for {
-			password, err = terminal.ReadPassword(context.Background(), "Password: ")
-			if err != nil {
-				return err
-			}
-			confirmPassword, err := terminal.ReadPassword(context.Background(), "Confirm Password: ")
-			if err != nil {
-				return err
-			}
-			if bytes.Equal(password, confirmPassword) {
-				break
-			} else if tries < opts.Retries {
-				fmt.Fprintln(terminal, "goenc: error: passwords does not match. try again.")
-				tries++
-				continue
-			} else {
-				return errors.New("passwords does not match")
-			}
-		}
+// Encrypt encrypts plaintext with password.
+func Encrypt(password, plaintext []byte, opts *Options) ([]byte, error) {
+	switch opts.Format {
+	case FormatDefault, FormatV1:
+		return encryptV1(password, plaintext, opts)
+	default:
+		return nil, fmt.Errorf("opts.Format is invalid: %v", opts.Format)
 	}
-
-	var r io.Reader = os.Stdin
-	if opts.Input != "-" {
-		fh, err := os.Open(opts.Input)
-		if err != nil {
-			return err
-		}
-		defer fh.Close()
-		r = fh
-	}
-	plaintext, err := io.ReadAll(r)
-	if err != nil {
-		return err
-	}
-
-	ciphertext, err := encryptV1(password, plaintext, opts)
-	if err != nil {
-		return err
-	}
-
-	var w io.Writer = os.Stdout
-	if opts.Output != "-" {
-		flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
-		if opts.NoClobber {
-			flags |= os.O_EXCL
-		}
-		fh, err := os.OpenFile(opts.Output, flags, 0o644)
-		if err != nil {
-			return err
-		}
-		defer fh.Close()
-		w = fh
-	}
-	if _, err := w.Write(ciphertext); err != nil {
-		return err
-	}
-
-	return nil
 }
 
-func decrypt(opts *options) error {
-	var r io.Reader = os.Stdin
-	if opts.Input != "-" {
-		fh, err := os.Open(opts.Input)
-		if err != nil {
-			return err
-		}
-		defer fh.Close()
-		r = fh
-	}
-	input, err := io.ReadAll(r)
-	if err != nil {
-		return err
-	}
+// Decrypt decrypts input with password.
+func Decrypt(password, input []byte) ([]byte, error) {
 	if len(input) == 0 {
-		return io.ErrUnexpectedEOF
+		return nil, io.ErrUnexpectedEOF
 	}
-
-	var decryptor func([]byte, []byte, *options) ([]byte, error)
 	switch input[0] {
 	case 0x01:
-		if len(input) < minSizeV1 {
-			return io.ErrUnexpectedEOF
-		}
-		decryptor = decryptV1
+		return decryptV1(password, input)
 	default:
-		return errors.New("invalid file format")
+		return nil, ErrFormat
 	}
-
-	var plaintext []byte
-	if value, ok := os.LookupEnv("PASSWORD"); ok {
-		password := []byte(value)
-		plaintext, err = decryptor(password, input, opts)
-		if err != nil {
-			return err
-		}
-	} else {
-		terminal, err := prompt.NewTerminal()
-		if err != nil {
-			return err
-		}
-		defer terminal.Close()
-
-		var tries uint8 = 1
-		for {
-			password, err := terminal.ReadPassword(context.Background(), "Password: ")
-			if err != nil {
-				return err
-			}
-			plaintext, err = decryptor(password, input, opts)
-			if errors.Is(err, ErrInvalidTag) && tries < opts.Retries {
-				fmt.Fprintln(terminal, "goenc: error: incorrect password. try again.")
-				tries++
-				continue
-			} else if err != nil {
-				return err
-			} else {
-				break
-			}
-		}
-	}
-
-	var w io.Writer = os.Stdout
-	if opts.Output != "-" {
-		flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
-		if opts.NoClobber {
-			flags |= os.O_EXCL
-		}
-		fh, err := os.OpenFile(opts.Output, flags, 0o644)
-		if err != nil {
-			return err
-		}
-		defer fh.Close()
-		w = fh
-	}
-	if _, err := w.Write(plaintext); err != nil {
-		return err
-	}
-
-	return nil
 }
 
-// Main runs the command
-func Main(args []string) error {
-	opts, err := parseArgs(args[1:])
+const (
+	saltSizeV1   = 16
+	headerSizeV1 = 10 + saltSizeV1
+	nonceSizeV1  = chacha20poly1305.NonceSizeX
+	ctStartV1    = headerSizeV1 + nonceSizeV1
+	minSizeV1    = headerSizeV1 + nonceSizeV1 + chacha20poly1305.Overhead
+)
+
+func encryptV1(password, plaintext []byte, opts *Options) ([]byte, error) {
+	buf := make([]byte, minSizeV1+len(plaintext))
+	header := buf[:headerSizeV1]
+	salt := header[10:]
+	nonce := buf[headerSizeV1:ctStartV1]
+	dst := buf[:ctStartV1]
+
+	header[0] = 0x01
+	binary.LittleEndian.PutUint32(header[1:5], opts.Time)
+	binary.LittleEndian.PutUint32(header[5:9], opts.Memory)
+	header[9] = opts.Threads
+	if _, err := rand.Read(salt); err != nil {
+		return nil, err
+	}
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
+	}
+
+	key := argon2.IDKey(password, salt, opts.Time, opts.Memory, opts.Threads, chacha20poly1305.KeySize)
+	aead, err := chacha20poly1305.NewX(key)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	return aead.Seal(dst, nonce, plaintext, header), nil
+}
+
+func decryptV1(password, input []byte) ([]byte, error) {
+	if len(input) < minSizeV1 {
+		return nil, io.ErrUnexpectedEOF
+	}
+	if input[0] != 0x01 {
+		return nil, ErrFormat
 	}
 
-	switch opts.Operation {
-	case opHelp:
-		fmt.Println(helpMessage)
-	case opVersion:
-		fmt.Printf("goenc %s (%s/%s)\n", getVersion(), runtime.GOOS, runtime.GOARCH)
-	case opEncrypt:
-		return encrypt(opts)
-	case opDecrypt:
-		return decrypt(opts)
-	default:
-		panic("goenc: invalid operation")
-	}
+	header := input[:headerSizeV1]
+	time := binary.LittleEndian.Uint32(header[1:5])
+	memory := binary.LittleEndian.Uint32(header[5:9])
+	threads := header[9]
+	salt := header[10:]
+	nonce := input[headerSizeV1:ctStartV1]
+	ciphertext := input[ctStartV1:]
 
-	return nil
+	key := argon2.IDKey(password, salt, time, memory, threads, chacha20poly1305.KeySize)
+	aead, err := chacha20poly1305.NewX(key)
+	if err != nil {
+		return nil, err
+	}
+	plaintext, err := aead.Open(nil, nonce, ciphertext, header)
+	if err != nil {
+		return nil, ErrInvalidTag
+	}
+	return plaintext, nil
 }

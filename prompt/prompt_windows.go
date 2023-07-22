@@ -1,25 +1,43 @@
 // Copyright (c) 2020-2023 cions
-// Licensed under the MIT License. See LICENSE for details
+// Licensed under the MIT License. See LICENSE for details.
 
 //go:build windows
-// +build windows
 
 package prompt
 
 import (
 	"context"
+	"errors"
+	"io"
 	"os"
 
 	"golang.org/x/sys/windows"
 )
 
-// Terminal represents an local terminal.
+type contextReader struct {
+	r   io.Reader
+	ctx context.Context
+}
+
+func (r *contextReader) Read(p []byte) (int, error) {
+	n, err := r.r.Read(p)
+	if err2 := context.Cause(r.ctx); err2 != nil {
+		return n, err2
+	}
+	return n, err
+}
+
+func (*contextReader) Close() error {
+	return nil
+}
+
+// Terminal represents a terminal.
 type Terminal struct {
 	conin, conout   *os.File
 	inMode, outMode uint32
 }
 
-// NewTerminal returns the Terminal.
+// NewTerminal opens a terminal.
 func NewTerminal() (*Terminal, error) {
 	conin, err := os.OpenFile("CONIN$", os.O_RDWR, 0)
 	if err != nil {
@@ -40,21 +58,22 @@ func (t *Terminal) Read(p []byte) (int, error) {
 	return t.conin.Read(p)
 }
 
-// ReadContext reads up to len(p) bytes from the terminal. If the context expires
-// before reading any data, ReadContext returns the context's error,
-func (t *Terminal) ReadContext(ctx context.Context, p []byte) (int, error) {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
+// ContextReader returns an io.ReadCloser that cancels the Read operation when
+// context's Done channel is closed.
+func (t *Terminal) ContextReader(ctx context.Context) (io.ReadCloser, error) {
 	go func() {
 		<-ctx.Done()
 		windows.CancelIoEx(windows.Handle(t.conin.Fd()), nil)
 	}()
-	return t.conin.Read(p)
+
+	return &contextReader{r: t.conin, ctx: ctx}, nil
 }
 
 // Write writes len(p) bytes to the terminal.
 func (t *Terminal) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
 	return t.conout.Write(p)
 }
 
@@ -62,10 +81,7 @@ func (t *Terminal) Write(p []byte) (int, error) {
 func (t *Terminal) Close() error {
 	err1 := t.conin.Close()
 	err2 := t.conout.Close()
-	if err1 != nil {
-		return err1
-	}
-	return err2
+	return errors.Join(err1, err2)
 }
 
 // MakeRaw puts the terminal into raw mode.
@@ -74,7 +90,7 @@ func (t *Terminal) MakeRaw() error {
 		return err
 	}
 
-	var inMode uint32
+	inMode := t.inMode
 	inMode |= windows.ENABLE_VIRTUAL_TERMINAL_INPUT
 	if err := windows.SetConsoleMode(windows.Handle(t.conin.Fd()), inMode); err != nil {
 		return err
@@ -84,7 +100,7 @@ func (t *Terminal) MakeRaw() error {
 		return err
 	}
 
-	var outMode uint32
+	outMode := t.outMode
 	outMode |= windows.ENABLE_PROCESSED_OUTPUT
 	outMode |= windows.ENABLE_WRAP_AT_EOL_OUTPUT
 	outMode |= windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING
@@ -98,11 +114,16 @@ func (t *Terminal) MakeRaw() error {
 
 // Restore restores the terminal to the state prior to calling MakeRaw.
 func (t *Terminal) Restore() error {
-	if err := windows.SetConsoleMode(windows.Handle(t.conin.Fd()), t.inMode); err != nil {
-		return err
+	err1 := windows.SetConsoleMode(windows.Handle(t.conin.Fd()), t.inMode)
+	err2 := windows.SetConsoleMode(windows.Handle(t.conout.Fd()), t.outMode)
+	return errors.Join(err1, err2)
+}
+
+// GetSize returns the visible dimensions of the given terminal.
+func (t *Terminal) GetSize() (width, height int, err error) {
+	var info windows.ConsoleScreenBufferInfo
+	if err := windows.GetConsoleScreenBufferInfo(windows.Handle(t.conout.Fd()), &info); err != nil {
+		return 0, 0, err
 	}
-	if err := windows.SetConsoleMode(windows.Handle(t.conout.Fd()), t.outMode); err != nil {
-		return err
-	}
-	return nil
+	return int(info.Window.Right - info.Window.Left + 1), int(info.Window.Bottom - info.Window.Top + 1), nil
 }
