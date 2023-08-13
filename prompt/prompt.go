@@ -1,4 +1,4 @@
-// Copyright (c) 2020-2023 cions
+// Copyright (c) 2020-2024 cions
 // Licensed under the MIT License. See LICENSE for details.
 
 package prompt
@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"slices"
 	"strconv"
 	"syscall"
 	"unicode/utf8"
@@ -109,51 +110,17 @@ func bytesToString(b []byte) string {
 	return unsafe.String(unsafe.SliceData(b), len(b))
 }
 
-func deleteBytes(b []byte, i, j int) []byte {
-	return append(b[:i], b[j:]...)
-}
-
-func insertBytes(b []byte, i int, v ...byte) []byte {
-	n := len(b)
-	m := len(v)
-	if m == 0 {
-		return b
-	} else if i == n {
-		return append(b, v...)
-	} else if n+m > cap(b) {
-		b2 := append(b[:i], make([]byte, n+m-i)...)
-		copy(b2[i:], v)
-		copy(b2[i+m:], b[i:])
-		return b2
-	} else {
-		b = b[:n+m]
-		copy(b[i+m:], b[i:])
-		copy(b[i:], v)
-		return b
-	}
-}
-
-func concat(xs ...any) []byte {
-	n := 0
-	for _, x := range xs {
+func concat(elems ...any) []byte {
+	ret := []byte(nil)
+	for _, x := range elems {
 		switch x := x.(type) {
 		case []byte:
-			n += len(x)
+			ret = append(ret, x...)
 		case string:
-			n += len(x)
+			ret = append(ret, x...)
 		}
 	}
-	b := make([]byte, n)
-	i := 0
-	for _, x := range xs {
-		switch x := x.(type) {
-		case []byte:
-			i += copy(b[i:], x)
-		case string:
-			i += copy(b[i:], x)
-		}
-	}
-	return b
+	return ret
 }
 
 func scanToken(data []byte, atEOF bool) (int, []byte, error) {
@@ -345,7 +312,7 @@ func (t *Terminal) readLine(r io.Reader, prompt string, transform TransformFunc)
 			if cursor > 0 {
 				_, n := utf8.DecodeLastRune(buffer[:cursor])
 				_, bs := transform(buffer[cursor-n : cursor])
-				buffer = deleteBytes(buffer, cursor-n, cursor)
+				buffer = slices.Delete(buffer, cursor-n, cursor)
 				cursor -= n
 				if cursor < len(buffer) {
 					disp, _ := transform(buffer[cursor:])
@@ -357,7 +324,7 @@ func (t *Terminal) readLine(r io.Reader, prompt string, transform TransformFunc)
 		case actDeleteForwardChar:
 			if cursor < len(buffer) {
 				_, n := utf8.DecodeRune(buffer[cursor:])
-				buffer = deleteBytes(buffer, cursor, cursor+n)
+				buffer = slices.Delete(buffer, cursor, cursor+n)
 				disp, _ := transform(buffer[cursor:])
 				out = concat(clreos, save_cursor, disp, restore_cursor)
 			}
@@ -392,7 +359,7 @@ func (t *Terminal) readLine(r io.Reader, prompt string, transform TransformFunc)
 			}
 			fallthrough
 		case actInsertChar:
-			buffer = insertBytes(buffer, cursor, token...)
+			buffer = slices.Insert(buffer, cursor, token...)
 			cursor += len(token)
 			disp1, _ := transform(token)
 			if cursor < len(buffer) {
