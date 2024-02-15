@@ -121,12 +121,13 @@ func TestParseArgs(t *testing.T) {
 
 	testParseArgs(t, []string{"-a"}, "err", "unknown option '-a'")
 	testParseArgs(t, []string{"-encrypt"}, "err", "unknown option '-c'")
+	testParseArgs(t, []string{"-d-"}, "err", "invalid option '-'")
 	testParseArgs(t, []string{"--sign"}, "err", "unknown option '--sign'")
 	testParseArgs(t, []string{"--recipient=name"}, "err", "unknown option '--recipient'")
 
-	testParseArgs(t, []string{"-t"}, "err", "option -t requires a value")
-	testParseArgs(t, []string{"--retries"}, "err", "option --retries requires a value")
-	testParseArgs(t, []string{"--encrypt=true"}, "err", "option --encrypt takes no value")
+	testParseArgs(t, []string{"-t"}, "err", "option -t requires an argument")
+	testParseArgs(t, []string{"--retries"}, "err", "option --retries requires an argument")
+	testParseArgs(t, []string{"--encrypt=true"}, "err", "option --encrypt takes no argument")
 
 	testParseArgs(t, []string{"-t", "nan"}, "err", "option -t: invalid number")
 	testParseArgs(t, []string{"-m1T"}, "err", "option -m: invalid number")

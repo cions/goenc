@@ -83,7 +83,7 @@ func (*options) ParseIntFlag(name, value string, width int) (uint64, error) {
 	switch {
 	case errors.Is(err, strconv.ErrSyntax):
 		return 0, fmt.Errorf("option %s: invalid number", name)
-	case errors.Is(err, strconv.ErrRange), x == 0:
+	case errors.Is(err, strconv.ErrRange):
 		return 0, fmt.Errorf("option %s: value out of range", name)
 	case err != nil:
 		return 0, fmt.Errorf("option %s: %w", name, err)
@@ -111,7 +111,7 @@ func (*options) ParseSizeFlag(name, value string) (uint32, error) {
 	switch {
 	case errors.Is(err, strconv.ErrSyntax):
 		return 0, fmt.Errorf("option %s: invalid number", name)
-	case errors.Is(err, strconv.ErrRange), x == 0:
+	case errors.Is(err, strconv.ErrRange):
 		return 0, fmt.Errorf("option %s: value out of range", name)
 	case err != nil:
 		return 0, fmt.Errorf("option %s: %w", name, err)
@@ -131,24 +131,32 @@ func (opts *options) VisitFlag(name, value string) error {
 		x, err := opts.ParseIntFlag(name, value, 32)
 		if err != nil {
 			return err
+		} else if x == 0 {
+			return fmt.Errorf("option %s: value out of range", name)
 		}
 		opts.Time = uint32(x)
 	case "-m", "--memory":
 		x, err := opts.ParseSizeFlag(name, value)
 		if err != nil {
 			return err
+		} else if x == 0 {
+			return fmt.Errorf("option %s: value out of range", name)
 		}
 		opts.Memory = x
 	case "-p", "--parallelism":
 		x, err := opts.ParseIntFlag(name, value, 8)
 		if err != nil {
 			return err
+		} else if x == 0 {
+			return fmt.Errorf("option %s: value out of range", name)
 		}
 		opts.Threads = uint8(x)
 	case "-r", "--retries":
 		x, err := opts.ParseIntFlag(name, value, 8)
 		if err != nil {
 			return err
+		} else if x == 0 {
+			return fmt.Errorf("option %s: value out of range", name)
 		}
 		opts.Retries = uint8(x)
 	case "-h", "--help":
@@ -167,7 +175,7 @@ func (opts *options) ParseArgs(args []string) error {
 	for len(args) > 0 {
 		var name, value string
 		switch {
-		case !strings.HasPrefix(args[0], "-"), args[0] == "-":
+		case !strings.HasPrefix(args[0], "-") || args[0] == "-":
 			posargs = append(posargs, args[0])
 			args = args[1:]
 			continue
@@ -175,53 +183,50 @@ func (opts *options) ParseArgs(args []string) error {
 			posargs = append(posargs, args[1:]...)
 			args = nil
 			continue
-		case strings.HasPrefix(args[0], "--"):
-			if strings.Contains(args[0], "=") {
-				name, value, _ = strings.Cut(args[0], "=")
-				if boolFlag, err := opts.IsBoolFlag(name); err != nil {
-					return err
-				} else if boolFlag {
-					return fmt.Errorf("option %s takes no value", name)
-				} else {
-					args = args[1:]
-				}
+		case strings.HasPrefix(args[0], "--") && strings.Contains(args[0], "="):
+			name, value, _ = strings.Cut(args[0], "=")
+			if boolFlag, err := opts.IsBoolFlag(name); err != nil {
+				return err
+			} else if boolFlag {
+				return fmt.Errorf("option %s takes no argument", name)
 			} else {
-				name = args[0]
-				if boolFlag, err := opts.IsBoolFlag(name); err != nil {
-					return err
-				} else if boolFlag {
-					args = args[1:]
-				} else {
-					if len(args) == 1 {
-						return fmt.Errorf("option %s requires a value", name)
-					}
-					value = args[1]
-					args = args[2:]
-				}
+				args = args[1:]
+			}
+		case strings.HasPrefix(args[0], "--"):
+			name = args[0]
+			if boolFlag, err := opts.IsBoolFlag(name); err != nil {
+				return err
+			} else if boolFlag {
+				args = args[1:]
+			} else if len(args) == 1 {
+				return fmt.Errorf("option %s requires an argument", name)
+			} else {
+				value = args[1]
+				args = args[2:]
+			}
+		case len(args[0]) > 2:
+			name = args[0][:2]
+			if boolFlag, err := opts.IsBoolFlag(name); err != nil {
+				return err
+			} else if boolFlag && args[0][2] == '-' {
+				return fmt.Errorf("invalid option '-'")
+			} else if boolFlag {
+				args[0] = "-" + args[0][2:]
+			} else {
+				value = args[0][2:]
+				args = args[1:]
 			}
 		default:
-			name = args[0][:2]
-			if len(args[0]) > 2 {
-				if boolFlag, err := opts.IsBoolFlag(name); err != nil {
-					return err
-				} else if boolFlag {
-					args[0] = "-" + args[0][2:]
-				} else {
-					value = args[0][2:]
-					args = args[1:]
-				}
+			name = args[0]
+			if boolFlag, err := opts.IsBoolFlag(name); err != nil {
+				return err
+			} else if boolFlag {
+				args = args[1:]
+			} else if len(args) == 1 {
+				return fmt.Errorf("option %s requires an argument", name)
 			} else {
-				if boolFlag, err := opts.IsBoolFlag(name); err != nil {
-					return err
-				} else if boolFlag {
-					args = args[1:]
-				} else {
-					if len(args) == 1 {
-						return fmt.Errorf("option %s requires a value", name)
-					}
-					value = args[1]
-					args = args[2:]
-				}
+				value = args[1]
+				args = args[2:]
 			}
 		}
 		if err := opts.VisitFlag(name, value); err != nil {
