@@ -19,7 +19,7 @@ Options:
   -d, --decrypt         Decrypt
   -n, --no-clobber      Do not overwrite an existing file
   -t, --time=N          Argon2 time parameter (default: 8)
-  -m, --memory=N[KMG]   Argon2 memory parameter (default: 1G)
+  -m, --memory=N[KMG]   Argon2 memory parameter (default: 256M)
   -p, --parallelism=N   Argon2 parallelism parameter (default: 4)
   -r, --retries=N       Maximum number of attempts to enter password (default: 3)
   -h, --help            Show this help message and exit
@@ -99,11 +99,11 @@ func (*options) ParseSizeFlag(name, value string) (uint32, error) {
 		value = strings.TrimSuffix(value, "K")
 	case strings.HasSuffix(value, "M"):
 		value = strings.TrimSuffix(value, "M")
-		unit = 1024
+		unit = 1 << 10
 		width -= 10
 	case strings.HasSuffix(value, "G"):
 		value = strings.TrimSuffix(value, "G")
-		unit = 1024 * 1024
+		unit = 1 << 20
 		width -= 20
 	}
 

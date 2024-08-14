@@ -59,7 +59,7 @@ func TestEncrypt(t *testing.T) {
 		f(t, &Options{Time: 1, Memory: 1, Threads: 1})
 	})
 	t.Run("T=8,M=64M,P=4", func(t *testing.T) {
-		f(t, &Options{Time: 8, Memory: 64 * 1024, Threads: 4})
+		f(t, &Options{Time: 8, Memory: 64 << 10, Threads: 4})
 	})
 }
 

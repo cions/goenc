@@ -184,7 +184,7 @@ func runCommand(args []string) error {
 		Operation: opEncrypt,
 		NoClobber: false,
 		Time:      8,
-		Memory:    1 * 1024 * 1024,
+		Memory:    256 << 10, // 256 MiB
 		Threads:   4,
 		Retries:   3,
 		Input:     "-",
