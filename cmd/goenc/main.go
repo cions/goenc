@@ -4,8 +4,8 @@
 package main
 
 import (
-	"bytes"
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io"
@@ -160,28 +160,30 @@ func (opts *Options) Arg(index int, value string, afterDDash bool) error {
 	return nil
 }
 
-func getPassword(maxRetries uint8) ([]byte, error) {
+func getPassword(maxRetries uint8) (password []byte, err error) {
 	if value, ok := os.LookupEnv("PASSWORD"); ok {
 		return []byte(value), nil
 	}
 
-	terminal, err := prompt.NewTerminal()
-	if err != nil {
-		return nil, err
+	terminal, err2 := prompt.NewTerminal()
+	if err2 != nil {
+		return nil, err2
 	}
-	defer terminal.Close()
+	defer func() {
+		err = errors.Join(err, terminal.Close())
+	}()
 
 	tries := uint8(1)
 	for {
-		password, err := terminal.ReadPassword(context.Background(), "Password: ")
-		if err != nil {
-			return nil, err
+		password, err2 := terminal.ReadPassword(context.Background(), "Password: ")
+		if err2 != nil {
+			return nil, fmt.Errorf("ReadPassword: %w", err2)
 		}
-		confirmPassword, err := terminal.ReadPassword(context.Background(), "Confirm Password: ")
-		if err != nil {
-			return nil, err
+		confirmPassword, err2 := terminal.ReadPassword(context.Background(), "Confirm Password: ")
+		if err2 != nil {
+			return nil, fmt.Errorf("ReadPassword: %w", err2)
 		}
-		if bytes.Equal(password, confirmPassword) {
+		if subtle.ConstantTimeCompare(password, confirmPassword) != 0 {
 			return password, nil
 		} else if tries < maxRetries {
 			fmt.Fprintf(terminal, "%v: error: passwords does not match. try again.\n", NAME)
@@ -192,34 +194,36 @@ func getPassword(maxRetries uint8) ([]byte, error) {
 	}
 }
 
-func encrypt(opts *Options) error {
+func encrypt(opts *Options) (err error) {
 	var r io.Reader = os.Stdin
 	if opts.Input != "-" {
-		fh, err := os.Open(opts.Input)
-		if err != nil {
-			return err
+		f, err2 := os.Open(opts.Input)
+		if err2 != nil {
+			return err2
 		}
-		defer fh.Close()
-		r = fh
+		defer func() {
+			err = errors.Join(err, f.Close())
+		}()
+		r = f
 	}
 
-	password, err := getPassword(opts.Retries)
-	if err != nil {
-		return err
+	password, err2 := getPassword(opts.Retries)
+	if err2 != nil {
+		return err2
 	}
 
-	plaintext, err := io.ReadAll(r)
-	if err != nil {
-		return err
+	plaintext, err2 := io.ReadAll(r)
+	if err2 != nil {
+		return err2
 	}
 
-	ciphertext, err := goenc.Encrypt(password, plaintext, &goenc.Options{
+	ciphertext, err2 := goenc.Encrypt(password, plaintext, &goenc.Options{
 		Time:    opts.Time,
 		Memory:  opts.Memory,
 		Threads: opts.Threads,
 	})
-	if err != nil {
-		return err
+	if err2 != nil {
+		return err2
 	}
 
 	var w io.Writer = os.Stdout
@@ -228,70 +232,76 @@ func encrypt(opts *Options) error {
 		if opts.NoClobber {
 			flags |= os.O_EXCL
 		}
-		fh, err := os.OpenFile(opts.Output, flags, 0o666)
-		if err != nil {
-			return err
+		f, err2 := os.OpenFile(opts.Output, flags, 0o666)
+		if err2 != nil {
+			return err2
 		}
-		defer fh.Close()
-		w = fh
+		defer func() {
+			err = errors.Join(err, f.Close())
+		}()
+		w = f
 	}
 
-	if _, err := w.Write(ciphertext); err != nil {
-		return err
+	if _, err2 := w.Write(ciphertext); err2 != nil {
+		return err2
 	}
 
 	return nil
 }
 
-func tryDecrypt(input []byte, maxRetries uint8) ([]byte, error) {
+func tryDecrypt(input []byte, maxRetries uint8) (plaintext []byte, err error) {
 	if value, ok := os.LookupEnv("PASSWORD"); ok {
 		password := []byte(value)
 		return goenc.Decrypt(password, input)
 	}
 
-	terminal, err := prompt.NewTerminal()
-	if err != nil {
-		return nil, err
+	terminal, err2 := prompt.NewTerminal()
+	if err2 != nil {
+		return nil, err2
 	}
-	defer terminal.Close()
+	defer func() {
+		err = errors.Join(err, terminal.Close())
+	}()
 
 	tries := uint8(1)
 	for {
-		password, err := terminal.ReadPassword(context.Background(), "Password: ")
-		if err != nil {
-			return nil, err
+		password, err2 := terminal.ReadPassword(context.Background(), "Password: ")
+		if err2 != nil {
+			return nil, fmt.Errorf("ReadPassword: %w", err2)
 		}
-		plaintext, err := goenc.Decrypt(password, input)
-		if errors.Is(err, goenc.ErrInvalidTag) && tries < maxRetries {
+		plaintext, err2 := goenc.Decrypt(password, input)
+		if errors.Is(err2, goenc.ErrInvalidTag) && tries < maxRetries {
 			fmt.Fprintf(terminal, "%v: error: incorrect password. try again.\n", NAME)
 			tries++
 			continue
-		} else if err != nil {
-			return nil, err
+		} else if err2 != nil {
+			return nil, err2
 		}
 		return plaintext, nil
 	}
 }
 
-func decrypt(opts *Options) error {
+func decrypt(opts *Options) (err error) {
 	var r io.Reader = os.Stdin
 	if opts.Input != "-" {
-		fh, err := os.Open(opts.Input)
-		if err != nil {
-			return err
+		f, err2 := os.Open(opts.Input)
+		if err2 != nil {
+			return err2
 		}
-		defer fh.Close()
-		r = fh
+		defer func() {
+			err = errors.Join(err, f.Close())
+		}()
+		r = f
 	}
 
-	input, err := io.ReadAll(r)
-	if err != nil {
-		return err
+	input, err2 := io.ReadAll(r)
+	if err2 != nil {
+		return err2
 	}
 
-	plaintext, err := tryDecrypt(input, opts.Retries)
-	if err != nil {
-		return err
+	plaintext, err2 := tryDecrypt(input, opts.Retries)
+	if err2 != nil {
+		return err2
 	}
 
 	var w io.Writer = os.Stdout
@@ -300,16 +310,18 @@ func decrypt(opts *Options) error {
 		if opts.NoClobber {
 			flags |= os.O_EXCL
 		}
-		fh, err := os.OpenFile(opts.Output, flags, 0o666)
-		if err != nil {
-			return err
+		f, err2 := os.OpenFile(opts.Output, flags, 0o666)
+		if err2 != nil {
+			return err2
 		}
-		defer fh.Close()
-		w = fh
+		defer func() {
+			err = errors.Join(err, f.Close())
+		}()
+		w = f
 	}
 
-	if _, err := w.Write(plaintext); err != nil {
-		return err
+	if _, err2 := w.Write(plaintext); err2 != nil {
+		return err2
 	}
 
 	return nil

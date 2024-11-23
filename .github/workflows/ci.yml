@@ -46,12 +46,12 @@ jobs:
         printf "%s" "${PLAINTEXT}" > plaintext
         printf "%s" "${ENCRYPTED}" | base64 -d > encrypted
         ./goenc -d encrypted decrypted
-        diff -q plaintext decrypted
+        cmp plaintext decrypted
 
         openssl rand -out random.in 2048
         ./goenc -t 1 --memory=64M --parallelism 1 random.in random.enc
         ./goenc -dn random.enc random.out
-        diff -q random.in random.out
+        cmp random.in random.out
 
   create-release:
     name: Create GitHub Release

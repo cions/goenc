@@ -46,7 +46,7 @@ func Encrypt(password, plaintext []byte, opts *Options) ([]byte, error) {
 	case FormatDefault, FormatV1:
 		return encryptV1(password, plaintext, opts)
 	default:
-		return nil, fmt.Errorf("opts.Format is invalid: %v", opts.Format)
+		return nil, fmt.Errorf("goenc: invalid Format: %v", opts.Format)
 	}
 }
 
@@ -83,10 +83,10 @@ func encryptV1(password, plaintext []byte, opts *Options) ([]byte, error) {
 	binary.LittleEndian.PutUint32(header[5:9], opts.Memory)
 	header[9] = opts.Threads
 	if _, err := rand.Read(salt); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("crypto/rand: %w", err)
 	}
 	if _, err := rand.Read(nonce); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("crypto/rand: %w", err)
 	}
 
 	key := argon2.IDKey(password, salt, opts.Time, opts.Memory, opts.Threads, chacha20poly1305.KeySize)

@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/signal"
@@ -21,28 +22,20 @@ import (
 	"golang.org/x/text/width"
 )
 
-const (
-	clreos         = "\x1b[J"      // Clear to end of screen
-	save_cursor    = "\x1b[s"      // Save cursor
-	restore_cursor = "\x1b[u"      // Restore cursor
-	ebp            = "\x1b[?2004h" // Enable Bracketed Paste Mode
-	dbp            = "\x1b[?2004l" // Disable Bracketed Paste Mode
-)
-
 // SignalError indicates that the operation was interrupted by a signal.
 type SignalError syscall.Signal
 
-func (se SignalError) Error() string {
-	return "received signal " + syscall.Signal(se).String()
+func (e SignalError) Error() string {
+	return fmt.Sprintf("recerived signal %v", syscall.Signal(e))
 }
 
 // Signal returns the signal number.
-func (se SignalError) Signal() int {
-	return int(se)
+func (e SignalError) Signal() int {
+	return int(e)
 }
 
-// TransformFunc transforms src into its display form and a sequence of backspaces for deleting it.
-type TransformFunc func(src []byte) (disp, bs []byte)
+// Transformer transforms src into its display form and a sequence of backspaces for deleting it.
+type Transformer func(src []byte) (disp, bs []byte)
 
 // CaretNotation displays control characters in caret notation.
 func CaretNotation(src []byte) ([]byte, []byte) {
@@ -50,20 +43,25 @@ func CaretNotation(src []byte) ([]byte, []byte) {
 	n := 0
 
 	for len(src) > 0 {
-		r, size := utf8.DecodeRune(src)
-		if r < 0x20 || r == 0x7f {
-			disp = append(disp, '^', byte(r)^0x40)
+		if b := src[0]; isctrl(b) {
+			disp = append(disp, '^', byte(b)^0x40)
 			n += 2
+			src = src[1:]
+		} else if b < utf8.RuneSelf {
+			disp = append(disp, b)
+			n += 1
+			src = src[1:]
 		} else {
+			r, size := utf8.DecodeRune(src)
 			disp = append(disp, src[:size]...)
-			switch p, _ := width.Lookup(src); p.Kind() {
+			switch width.LookupRune(r).Kind() {
 			case width.EastAsianWide, width.EastAsianFullwidth:
 				n += 2
 			default:
 				n += 1
 			}
+			src = src[size:]
 		}
-		src = src[size:]
 	}
 
 	return disp, bytes.Repeat([]byte{'\b'}, n)
@@ -102,27 +100,6 @@ const (
 	actPasteEnd
 )
 
-func isHex(b byte) bool {
-	return b-0x30 < 10 || ((b&0xdf)-0x41) < 6
-}
-
-func bytesToString(b []byte) string {
-	return unsafe.String(unsafe.SliceData(b), len(b))
-}
-
-func concat(elems ...any) []byte {
-	ret := []byte(nil)
-	for _, x := range elems {
-		switch x := x.(type) {
-		case []byte:
-			ret = append(ret, x...)
-		case string:
-			ret = append(ret, x...)
-		}
-	}
-	return ret
-}
-
 func scanToken(data []byte, atEOF bool) (int, []byte, error) {
 	if atEOF && len(data) == 0 {
 		return 0, nil, nil
@@ -151,7 +128,7 @@ func scanToken(data []byte, atEOF bool) (int, []byte, error) {
 		}
 
 		i := 2
-		for i < len(data) && i < maxlen && isHex(data[i]) {
+		for i < len(data) && i < maxlen && ishex(data[i]) {
 			i++
 		}
 		if i == len(data) && i < maxlen && !atEOF {
@@ -185,7 +162,7 @@ func scanToken(data []byte, atEOF bool) (int, []byte, error) {
 
 func tokenToAction(token []byte, inPaste bool) action {
 	if inPaste {
-		switch bytesToString(token) {
+		switch asstr(token) {
 		case "\x1b[201~": // Bracketed Paste End
 			return actPasteEnd
 		default:
@@ -193,7 +170,7 @@ func tokenToAction(token []byte, inPaste bool) action {
 		}
 	}
 
-	if 0x20 <= token[0] && token[0] != 0x7f {
+	if !isctrl(token[0]) {
 		return actInsertChar
 	}
 
@@ -239,17 +216,27 @@ func tokenToAction(token []byte, inPaste bool) action {
 		return actIgnore
 	}
 
-	switch bytesToString(token) {
+	switch asstr(token) {
+	case "\x1b[A", "\x1bOA": // Up
+		return actIgnore
+	case "\x1b[B", "\x1bOB": // Down
+		return actIgnore
 	case "\x1b[C", "\x1bOC": // Right
 		return actForwardChar
 	case "\x1b[D", "\x1bOD": // Left
 		return actBackwardChar
 	case "\x1b[1~", "\x1b[7~", "\x1b[H", "\x1bOH": // Home
 		return actBeginningOfLine
-	case "\x1b[4~", "\x1b[8~", "\x1b[F", "\x1bOF": // End
-		return actEndOfLine
+	case "\x1b[2~": // Insert
+		return actIgnore
 	case "\x1b[3~": // Delete
 		return actDeleteForwardChar
+	case "\x1b[4~", "\x1b[8~", "\x1b[F", "\x1bOF": // End
+		return actEndOfLine
+	case "\x1b[5~": // Page Up
+		return actIgnore
+	case "\x1b[6~": // Page Down
+		return actIgnore
 	case "\x1bOM": // Enter
 		return actAccept
 	case "\x1b[200~": // Bracketed Paste Start
@@ -259,27 +246,28 @@ func tokenToAction(token []byte, inPaste bool) action {
 	}
 }
 
-func (t *Terminal) readLine(r io.Reader, prompt string, transform TransformFunc) ([]byte, error) {
+func (t *Terminal) readLine(r io.Reader, prompt string, transform Transformer) (s []byte, err error) {
 	buffer := make([]byte, 0, 256)
 	cursor := 0
 	inPaste := false
 
-	if _, err := t.Write(concat("\r", clreos, prompt, ebp)); err != nil {
-		return nil, err
+	if _, err2 := t.Write(concat("\r", clreos, prompt, ebp)); err2 != nil {
+		return nil, err2
 	}
 
 	defer func() {
 		disp, _ := transform(buffer[cursor:])
-		t.Write(concat(disp, "\r\n", dbp))
+		if _, err2 := t.Write(concat(disp, "\r\n", dbp)); err2 != nil {
+			err = errors.Join(err, err2)
+		}
 	}()
 
 	scanner := bufio.NewScanner(r)
 	scanner.Split(scanToken)
 	for scanner.Scan() {
 		token := scanner.Bytes()
-		action := tokenToAction(token, inPaste)
-		var out []byte
-		switch action {
+		var output []byte
+		switch action := tokenToAction(token, inPaste); action {
 		case actAccept:
 			return buffer, nil
 		case actSIGINT:
@@ -288,24 +276,24 @@ func (t *Terminal) readLine(r io.Reader, prompt string, transform TransformFunc)
 			return nil, SignalError(syscall.SIGQUIT)
 		case actBeginningOfLine:
 			if cursor > 0 {
-				_, out = transform(buffer[:cursor])
+				_, output = transform(buffer[:cursor])
 				cursor = 0
 			}
 		case actEndOfLine:
 			if cursor < len(buffer) {
-				out, _ = transform(buffer[cursor:])
+				output, _ = transform(buffer[cursor:])
 				cursor = len(buffer)
 			}
 		case actBackwardChar:
 			if cursor > 0 {
 				_, n := utf8.DecodeLastRune(buffer[:cursor])
-				_, out = transform(buffer[cursor-n : cursor])
+				_, output = transform(buffer[cursor-n : cursor])
 				cursor -= n
 			}
 		case actForwardChar:
 			if cursor < len(buffer) {
 				_, n := utf8.DecodeRune(buffer[cursor:])
-				out, _ = transform(buffer[cursor : cursor+n])
+				output, _ = transform(buffer[cursor : cursor+n])
 				cursor += n
 			}
 		case actDeleteBackwardChar:
@@ -316,9 +304,9 @@ func (t *Terminal) readLine(r io.Reader, prompt string, transform TransformFunc)
 				cursor -= n
 				if cursor < len(buffer) {
 					disp, _ := transform(buffer[cursor:])
-					out = concat(bs, clreos, save_cursor, disp, restore_cursor)
+					output = concat(bs, clreos, sc, disp, rc)
 				} else {
-					out = concat(bs, clreos)
+					output = concat(bs, clreos)
 				}
 			}
 		case actDeleteForwardChar:
@@ -326,33 +314,33 @@ func (t *Terminal) readLine(r io.Reader, prompt string, transform TransformFunc)
 				_, n := utf8.DecodeRune(buffer[cursor:])
 				buffer = slices.Delete(buffer, cursor, cursor+n)
 				disp, _ := transform(buffer[cursor:])
-				out = concat(clreos, save_cursor, disp, restore_cursor)
+				output = concat(clreos, sc, disp, rc)
 			}
 		case actKillLine:
 			buffer = buffer[:cursor]
-			out = concat(clreos)
+			output = concat(clreos)
 		case actKillWholeLine:
 			_, bs := transform(buffer[:cursor])
 			buffer = buffer[:0]
 			cursor = 0
-			out = concat(bs, "\r", clreos, prompt)
+			output = concat(bs, "\r", clreos, prompt)
 		case actRefresh:
 			disp1, bs := transform(buffer[:cursor])
 			disp2, _ := transform(buffer[cursor:])
-			out = concat(bs, "\r", clreos, prompt, disp1, save_cursor, disp2, restore_cursor)
+			output = concat(bs, "\r", clreos, prompt, disp1, sc, disp2, rc)
 		case actPasteStart:
 			inPaste = true
 		case actPasteEnd:
 			inPaste = false
 		case actQuotedInsert:
 			if len(token) > 1 {
-				cp, err := strconv.ParseUint(bytesToString(token[2:]), 16, 32)
+				n, err := strconv.ParseUint(asstr(token[2:]), 16, 32)
 				if err != nil {
 					token = token[1:]
 				} else if token[1] == 'x' {
-					token = []byte{byte(cp)}
+					token = append(token[:0], byte(n))
 				} else {
-					token = utf8.AppendRune(nil, rune(cp))
+					token = utf8.AppendRune(token[:0], rune(n))
 				}
 			} else if scanner.Scan() {
 				token = scanner.Bytes()
@@ -364,23 +352,23 @@ func (t *Terminal) readLine(r io.Reader, prompt string, transform TransformFunc)
 			disp1, _ := transform(token)
 			if cursor < len(buffer) {
 				disp2, _ := transform(buffer[cursor:])
-				out = concat(clreos, disp1, save_cursor, disp2, restore_cursor)
+				output = concat(disp1, clreos, sc, disp2, rc)
 			} else {
-				out = concat(disp1)
+				output = concat(disp1)
 			}
 		}
-		if _, err := t.Write(out); err != nil {
-			return nil, err
+		if _, err2 := t.Write(output); err2 != nil {
+			return nil, err2
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
+	if err2 := scanner.Err(); err2 != nil {
+		return nil, err2
 	}
 	return buffer, nil
 }
 
-// ReadCustom reads a line of input from the terminal with custom transform function.
-func (t *Terminal) ReadCustom(ctx context.Context, prompt string, transform TransformFunc) ([]byte, error) {
+// ReadCustom reads a line from the terminal with custom transform function.
+func (t *Terminal) ReadCustom(ctx context.Context, prompt string, transform Transformer) (s []byte, err error) {
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 
@@ -392,38 +380,83 @@ func (t *Terminal) ReadCustom(ctx context.Context, prompt string, transform Tran
 		case sig := <-signalCh:
 			if ssig, ok := sig.(syscall.Signal); ok {
 				cancel(SignalError(ssig))
+			} else {
+				cancel(fmt.Errorf("caught signal: %v", sig))
 			}
-			cancel(errors.New("caught signal: " + sig.String()))
 		case <-ctx.Done():
 		}
 		signal.Stop(signalCh)
 	}()
 
-	r, err := t.ContextReader(ctx)
-	if err != nil {
-		return nil, err
+	r, err2 := t.ContextReader(ctx)
+	if err2 != nil {
+		return nil, err2
 	}
-	defer r.Close()
+	defer func() {
+		err = errors.Join(err, r.Close())
+	}()
 
-	if err := t.MakeRaw(); err != nil {
-		return nil, err
+	if err2 := t.MakeRaw(); err2 != nil {
+		return nil, fmt.Errorf("failed to put the terminal into raw mode: %w", err2)
 	}
-	defer t.Restore()
+	defer func() {
+		if err2 := t.Restore(); err2 != nil {
+			err2 = fmt.Errorf("failed to restore the terminal from raw mode: %w", err2)
+			err = errors.Join(err, err2)
+		}
+	}()
 
 	return t.readLine(r, prompt, transform)
 }
 
-// ReadLine reads a line of input from the terminal.
+// ReadLine reads a line from the terminal.
 func (t *Terminal) ReadLine(ctx context.Context, prompt string) ([]byte, error) {
 	return t.ReadCustom(ctx, prompt, CaretNotation)
 }
 
-// ReadPassword reads a line of input from the terminal with masking.
+// ReadPassword reads a line from the terminal with masking.
 func (t *Terminal) ReadPassword(ctx context.Context, prompt string) ([]byte, error) {
 	return t.ReadCustom(ctx, prompt, Masked)
 }
 
-// ReadNoEcho reads a line of input from the terminal without local echo.
+// ReadNoEcho reads a line from the terminal without local echo.
 func (t *Terminal) ReadNoEcho(ctx context.Context, prompt string) ([]byte, error) {
 	return t.ReadCustom(ctx, prompt, Blanked)
+}
+
+func isctrl(b byte) bool {
+	return b < 0x20 || b == 0x7f
+}
+
+func ishex(b byte) bool {
+	return b-0x30 < 10 || ((b&^0x20)-0x41) < 6
+}
+
+func asstr(b []byte) string {
+	return unsafe.String(unsafe.SliceData(b), len(b))
+}
+
+func concat(a ...any) []byte {
+	n := 0
+	for _, x := range a {
+		switch x := x.(type) {
+		case []byte:
+			n += len(x)
+		case string:
+			n += len(x)
+		}
+		if n < 0 {
+			panic("concat: output length overflow")
+		}
+	}
+	s := make([]byte, 0, n)
+	for _, x := range a {
+		switch x := x.(type) {
+		case []byte:
+			s = append(s, x...)
+		case string:
+			s = append(s, x...)
+		}
+	}
+	return s
 }

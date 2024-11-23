@@ -14,22 +14,13 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-type contextReader struct {
-	r   io.Reader
-	ctx context.Context
-}
-
-func (r *contextReader) Read(p []byte) (int, error) {
-	n, err := r.r.Read(p)
-	if err2 := context.Cause(r.ctx); err2 != nil {
-		return n, err2
-	}
-	return n, err
-}
-
-func (*contextReader) Close() error {
-	return nil
-}
+const (
+	clreos = "\x1b[J" // Clear to end of screen
+	sc     = "\x1b[s" // Save cursor
+	rc     = "\x1b[u" // Restore cursor
+	ebp    = ""       // Enable Bracketed Paste Mode
+	dbp    = ""       // Disable Bracketed Paste Mode
+)
 
 // Terminal represents a terminal.
 type Terminal struct {
@@ -43,13 +34,10 @@ func NewTerminal() (*Terminal, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	conout, err := os.OpenFile("CONOUT$", os.O_RDWR, 0)
 	if err != nil {
-		conin.Close()
-		return nil, err
+		return nil, errors.Join(err, conin.Close())
 	}
-
 	return &Terminal{conin: conin, conout: conout}, nil
 }
 
@@ -65,8 +53,7 @@ func (t *Terminal) ContextReader(ctx context.Context) (io.ReadCloser, error) {
 		<-ctx.Done()
 		windows.CancelIoEx(windows.Handle(t.conin.Fd()), nil)
 	}()
-
-	return &contextReader{r: t.conin, ctx: ctx}, nil
+	return &contextReader{ctx, t.conin}, nil
 }
 
 // Write writes len(p) bytes to the terminal.
@@ -87,17 +74,16 @@ func (t *Terminal) Close() error {
 // MakeRaw puts the terminal into raw mode.
 func (t *Terminal) MakeRaw() error {
 	if err := windows.GetConsoleMode(windows.Handle(t.conin.Fd()), &t.inMode); err != nil {
-		return err
+		return &os.SyscallError{Syscall: "GetConsoleMode", Err: err}
+	}
+	if err := windows.GetConsoleMode(windows.Handle(t.conout.Fd()), &t.outMode); err != nil {
+		return &os.SyscallError{Syscall: "GetConsoleMode", Err: err}
 	}
 
 	inMode := t.inMode
 	inMode |= windows.ENABLE_VIRTUAL_TERMINAL_INPUT
 	if err := windows.SetConsoleMode(windows.Handle(t.conin.Fd()), inMode); err != nil {
-		return err
-	}
-
-	if err := windows.GetConsoleMode(windows.Handle(t.conout.Fd()), &t.outMode); err != nil {
-		return err
+		return &os.SyscallError{Syscall: "SetConsoleMode", Err: err}
 	}
 
 	outMode := t.outMode
@@ -106,7 +92,7 @@ func (t *Terminal) MakeRaw() error {
 	outMode |= windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING
 	outMode |= windows.DISABLE_NEWLINE_AUTO_RETURN
 	if err := windows.SetConsoleMode(windows.Handle(t.conout.Fd()), outMode); err != nil {
-		return err
+		return &os.SyscallError{Syscall: "SetConsoleMode", Err: err}
 	}
 
 	return nil
@@ -115,15 +101,38 @@ func (t *Terminal) MakeRaw() error {
 // Restore restores the terminal to the state prior to calling MakeRaw.
 func (t *Terminal) Restore() error {
 	err1 := windows.SetConsoleMode(windows.Handle(t.conin.Fd()), t.inMode)
+	if err1 != nil {
+		err1 = &os.SyscallError{Syscall: "SetConsoleMode", Err: err1}
+	}
 	err2 := windows.SetConsoleMode(windows.Handle(t.conout.Fd()), t.outMode)
+	if err2 != nil {
+		err2 = &os.SyscallError{Syscall: "SetConsoleMode", Err: err2}
+	}
 	return errors.Join(err1, err2)
 }
 
-// GetSize returns the visible dimensions of the given terminal.
+// GetSize returns the visible dimensions of the terminal.
 func (t *Terminal) GetSize() (width, height int, err error) {
 	var info windows.ConsoleScreenBufferInfo
 	if err := windows.GetConsoleScreenBufferInfo(windows.Handle(t.conout.Fd()), &info); err != nil {
-		return 0, 0, err
+		return 0, 0, &os.SyscallError{Syscall: "GetConsoleScreenBufferInfo", Err: err}
 	}
 	return int(info.Window.Right - info.Window.Left + 1), int(info.Window.Bottom - info.Window.Top + 1), nil
+}
+
+type contextReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (r *contextReader) Read(p []byte) (int, error) {
+	n, err := r.r.Read(p)
+	if err2 := context.Cause(r.ctx); err2 != nil {
+		return n, err2
+	}
+	return n, err
+}
+
+func (*contextReader) Close() error {
+	return nil
 }
