@@ -10,7 +10,7 @@ A simple file encryption tool
 
 ## Usage
 
-```sh
+```
 $ goenc --help
 Usage: goenc [OPTIONS] [INPUT] [OUTPUT]
 
