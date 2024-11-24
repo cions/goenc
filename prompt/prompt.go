@@ -251,7 +251,7 @@ func (t *Terminal) readLine(r io.Reader, prompt string, transform Transformer) (
 	cursor := 0
 	inPaste := false
 
-	if _, err2 := t.Write(concat("\r", clreos, prompt, ebp)); err2 != nil {
+	if _, err2 := t.Write(concat("\r", clreos, prompt, ewrap, ebp)); err2 != nil {
 		return nil, err2
 	}
 

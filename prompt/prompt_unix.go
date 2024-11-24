@@ -16,11 +16,12 @@ import (
 )
 
 const (
-	clreos = "\x1b[J"      // Clear to end of screen
-	sc     = "\x1b[s"      // Save cursor
-	rc     = "\x1b[u"      // Restore cursor
-	ebp    = "\x1b[?2004h" // Enable Bracketed Paste Mode
-	dbp    = "\x1b[?2004l" // Disable Bracketed Paste Mode
+	clreos = "\x1b[J"            // Clear to end of screen
+	sc     = "\x1b[s"            // Save cursor
+	rc     = "\x1b[u"            // Restore cursor
+	ewrap  = "\x1b[?7h\x1b[?45h" // Enable wraparound mode (DECAWM) and reverse wrap mode (REVERSEWRAP)
+	ebp    = "\x1b[?2004h"       // Enable Bracketed Paste Mode
+	dbp    = "\x1b[?2004l"       // Disable Bracketed Paste Mode
 )
 
 // Terminal represents a terminal.

@@ -18,6 +18,7 @@ const (
 	clreos = "\x1b[J" // Clear to end of screen
 	sc     = "\x1b[s" // Save cursor
 	rc     = "\x1b[u" // Restore cursor
+	ewrap  = ""       // Enable wraparound mode (DECAWM) and reverse wrap mode (REVERSEWRAP)
 	ebp    = ""       // Enable Bracketed Paste Mode
 	dbp    = ""       // Disable Bracketed Paste Mode
 )
