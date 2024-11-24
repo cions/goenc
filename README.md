@@ -11,13 +11,27 @@ A simple file encryption tool
 ## Usage
 
 ```sh
-$ goenc [-d] [<input>] [<output>]
-```
+$ goenc --help
+Usage: goenc [OPTIONS] [INPUT] [OUTPUT]
 
-Password can be passed by the environment variable *PASSWORD*.
+A simple file encryption tool
 
-```sh
-$ PASSWORD=<password> goenc [-d] <input> <output>
+Options:
+  -e, --encrypt         Encrypt
+  -d, --decrypt         Decrypt
+  -n, --no-clobber      Do not overwrite an existing file
+  -t, --time=N          Argon2 time parameter (default: 8)
+  -m, --memory=N[KMG]   Argon2 memory parameter (default: 256M)
+  -p, --parallelism=N   Argon2 parallelism parameter (default: 4)
+  -r, --retries=N       Maximum number of attempts to enter password
+                        (default: 3)
+      --password-from=FILE
+                        Read password from FILE
+  -h, --help            Show this help message and exit
+      --version         Show version information and exit
+
+Environment Variables:
+  PASSWORD              Encryption password
 ```
 
 ## Installation

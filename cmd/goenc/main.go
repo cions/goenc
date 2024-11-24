@@ -34,6 +34,8 @@ Options:
   -p, --parallelism=N   Argon2 parallelism parameter (default: 4)
   -r, --retries=N       Maximum number of attempts to enter password
                         (default: 3)
+      --password-from=FILE
+                        Read password from FILE
   -h, --help            Show this help message and exit
       --version         Show version information and exit
 
@@ -48,14 +50,15 @@ Exit Status:
 `
 
 type Options struct {
-	Encrypt   bool
-	NoClobber bool
-	Time      uint32
-	Memory    uint32
-	Threads   uint8
-	Retries   uint8
-	Input     string
-	Output    string
+	Encrypt      bool
+	NoClobber    bool
+	Time         uint32
+	Memory       uint32
+	Threads      uint8
+	Retries      uint8
+	PasswordFrom string
+	Input        string
+	Output       string
 }
 
 func (opts *Options) Kind(name string) options.Kind {
@@ -73,6 +76,8 @@ func (opts *Options) Kind(name string) options.Kind {
 	case "-p", "--parallelism":
 		return options.Required
 	case "-r", "--retries":
+		return options.Required
+	case "--password-from":
 		return options.Required
 	case "-h", "--help":
 		return options.Boolean
@@ -138,6 +143,8 @@ func (opts *Options) Option(name string, value string, hasValue bool) error {
 			return strconv.ErrRange
 		}
 		opts.Retries = uint8(n)
+	case "--password-from":
+		opts.PasswordFrom = value
 	case "-h", "--help":
 		return options.ErrHelp
 	case "--version":
@@ -160,7 +167,14 @@ func (opts *Options) Arg(index int, value string, afterDDash bool) error {
 	return nil
 }
 
-func getPassword(maxRetries uint8) (password []byte, err error) {
+func getPassword(opts *Options) (password []byte, err error) {
+	if opts.PasswordFrom != "" {
+		if opts.PasswordFrom == "-" {
+			return io.ReadAll(os.Stdin)
+		} else {
+			return os.ReadFile(opts.PasswordFrom)
+		}
+	}
 	if value, ok := os.LookupEnv("PASSWORD"); ok {
 		return []byte(value), nil
 	}
@@ -185,7 +199,7 @@ func getPassword(maxRetries uint8) (password []byte, err error) {
 		}
 		if subtle.ConstantTimeCompare(password, confirmPassword) != 0 {
 			return password, nil
-		} else if tries < maxRetries {
+		} else if tries < opts.Retries {
 			fmt.Fprintf(terminal, "%v: error: passwords does not match. try again.\n", NAME)
 			tries++
 		} else {
@@ -207,7 +221,7 @@ func encrypt(opts *Options) (err error) {
 		r = f
 	}
 
-	password, err2 := getPassword(opts.Retries)
+	password, err2 := getPassword(opts)
 	if err2 != nil {
 		return err2
 	}
@@ -249,7 +263,19 @@ func encrypt(opts *Options) (err error) {
 	return nil
 }
 
-func tryDecrypt(input []byte, maxRetries uint8) (plaintext []byte, err error) {
+func tryDecrypt(opts *Options, input []byte) (plaintext []byte, err error) {
+	if opts.PasswordFrom != "" {
+		var password []byte
+		if opts.PasswordFrom == "-" {
+			password, err = io.ReadAll(os.Stdin)
+		} else {
+			password, err = os.ReadFile(opts.PasswordFrom)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return goenc.Decrypt(password, input)
+	}
 	if value, ok := os.LookupEnv("PASSWORD"); ok {
 		password := []byte(value)
 		return goenc.Decrypt(password, input)
@@ -270,7 +296,7 @@ func tryDecrypt(input []byte, maxRetries uint8) (plaintext []byte, err error) {
 			return nil, fmt.Errorf("ReadPassword: %w", err2)
 		}
 		plaintext, err2 := goenc.Decrypt(password, input)
-		if errors.Is(err2, goenc.ErrInvalidTag) && tries < maxRetries {
+		if errors.Is(err2, goenc.ErrInvalidTag) && tries < opts.Retries {
 			fmt.Fprintf(terminal, "%v: error: incorrect password. try again.\n", NAME)
 			tries++
 			continue
@@ -299,7 +325,7 @@ func decrypt(opts *Options) (err error) {
 		return err2
 	}
 
-	plaintext, err2 := tryDecrypt(input, opts.Retries)
+	plaintext, err2 := tryDecrypt(opts, input)
 	if err2 != nil {
 		return err2
 	}
@@ -353,6 +379,8 @@ func run(args []string) error {
 		return nil
 	} else if err != nil {
 		return err
+	} else if opts.PasswordFrom == "-" && opts.Input == "-" {
+		return options.Errorf("cannot read both password and input from stdin")
 	}
 
 	if opts.Encrypt {
