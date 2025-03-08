@@ -1,4 +1,4 @@
-// Copyright (c) 2020-2024 cions
+// Copyright (c) 2020-2025 cions
 // Licensed under the MIT License. See LICENSE for details.
 
 package prompt
@@ -44,7 +44,7 @@ func CaretNotation(src []byte) ([]byte, []byte) {
 
 	for len(src) > 0 {
 		if b := src[0]; isctrl(b) {
-			disp = append(disp, '^', byte(b)^0x40)
+			disp = append(disp, '^', b^0x40)
 			n += 2
 			src = src[1:]
 		} else if b < utf8.RuneSelf {
@@ -137,20 +137,20 @@ func scanToken(data []byte, atEOF bool) (int, []byte, error) {
 			return 1, data[:1], nil
 		}
 		return i, data[:i], nil
-	case 0x1b: // ^[
+	case 0x1B: // ^[
 		if len(data) >= 3 && data[1] == '[' {
 			i := 2
-			for i < len(data) && data[i]-0x30 <= 0x0f {
+			for i < len(data) && data[i]-0x30 <= 0x0F {
 				i++
 			}
-			for i < len(data) && data[i]-0x20 <= 0x0f {
+			for i < len(data) && data[i]-0x20 <= 0x0F {
 				i++
 			}
-			if i < len(data) && data[i]-0x40 <= 0x3e {
+			if i < len(data) && data[i]-0x40 <= 0x3E {
 				i++
 				return i, data[:i], nil
 			}
-		} else if len(data) >= 3 && data[1] == 'O' && data[2]-0x20 <= 0x5f {
+		} else if len(data) >= 3 && data[1] == 'O' && data[2]-0x20 <= 0x5F {
 			return 3, data[:3], nil
 		}
 		return 1, data[:1], nil
@@ -191,13 +191,13 @@ func tokenToAction(token []byte, inPaste bool) action {
 		return actDeleteBackwardChar
 	case 0x09: // ^I, Tab
 		return actInsertChar
-	case 0x0a: // ^J, Enter
+	case 0x0A: // ^J, Enter
 		return actAccept
-	case 0x0b: // ^K
+	case 0x0B: // ^K
 		return actKillLine
-	case 0x0c: // ^L
+	case 0x0C: // ^L
 		return actRefresh
-	case 0x0d: // ^M
+	case 0x0D: // ^M
 		return actAccept
 	case 0x15: // ^U
 		return actKillWholeLine
@@ -205,12 +205,12 @@ func tokenToAction(token []byte, inPaste bool) action {
 		return actQuotedInsert
 	case 0x1b: // ^[, Esc
 		break
-	case 0x1c: // ^\
+	case 0x1C: // ^\
 		if runtime.GOOS == "windows" {
 			return actIgnore
 		}
 		return actSIGQUIT
-	case 0x7f: // Backspace
+	case 0x7F: // Backspace
 		return actDeleteBackwardChar
 	default:
 		return actIgnore
@@ -265,8 +265,9 @@ func (t *Terminal) readLine(r io.Reader, prompt string, transform Transformer) (
 	scanner := bufio.NewScanner(r)
 	scanner.Split(scanToken)
 	for scanner.Scan() {
-		token := scanner.Bytes()
 		var output []byte
+
+		token := scanner.Bytes()
 		switch action := tokenToAction(token, inPaste); action {
 		case actAccept:
 			return buffer, nil
@@ -357,6 +358,7 @@ func (t *Terminal) readLine(r io.Reader, prompt string, transform Transformer) (
 				output = concat(disp1)
 			}
 		}
+
 		if _, err2 := t.Write(output); err2 != nil {
 			return nil, err2
 		}
@@ -364,6 +366,7 @@ func (t *Terminal) readLine(r io.Reader, prompt string, transform Transformer) (
 	if err2 := scanner.Err(); err2 != nil {
 		return nil, err2
 	}
+
 	return buffer, nil
 }
 
@@ -425,11 +428,11 @@ func (t *Terminal) ReadNoEcho(ctx context.Context, prompt string) ([]byte, error
 }
 
 func isctrl(b byte) bool {
-	return b < 0x20 || b == 0x7f
+	return b < 0x20 || b == 0x7F
 }
 
 func ishex(b byte) bool {
-	return b-0x30 < 10 || ((b&^0x20)-0x41) < 6
+	return b-0x30 < 10 || ((b|0x20)-0x61) < 6
 }
 
 func asstr(b []byte) string {

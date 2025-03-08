@@ -1,4 +1,4 @@
-// Copyright (c) 2020-2024 cions
+// Copyright (c) 2020-2025 cions
 // Licensed under the MIT License. See LICENSE for details.
 
 package main
@@ -366,20 +366,21 @@ func run(args []string) error {
 	}
 
 	_, err := options.Parse(opts, args)
-	if errors.Is(err, options.ErrHelp) {
+	switch {
+	case errors.Is(err, options.ErrHelp):
 		usage := strings.ReplaceAll(USAGE, "$NAME", NAME)
 		fmt.Print(usage)
 		return nil
-	} else if errors.Is(err, options.ErrVersion) {
+	case errors.Is(err, options.ErrVersion):
 		version := VERSION
 		if bi, ok := debug.ReadBuildInfo(); ok {
 			version = bi.Main.Version
 		}
 		fmt.Printf("%v %v\n", NAME, version)
 		return nil
-	} else if err != nil {
+	case err != nil:
 		return err
-	} else if opts.PasswordFrom == "-" && opts.Input == "-" {
+	case opts.PasswordFrom == "-" && opts.Input == "-":
 		return options.Errorf("cannot read both password and input from stdin")
 	}
 

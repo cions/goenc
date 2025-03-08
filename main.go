@@ -1,4 +1,4 @@
-// Copyright (c) 2020-2024 cions
+// Copyright (c) 2020-2025 cions
 // Licensed under the MIT License. See LICENSE for details.
 
 package goenc
