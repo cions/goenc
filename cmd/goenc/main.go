@@ -1,5 +1,5 @@
-// Copyright (c) 2020-2026 cions
-// Licensed under the MIT License. See LICENSE for details.
+// Copyright (c) 2020-2026 cions <cions@tuta.com>
+// SPDX-License-Identifier: MIT
 
 package main
 
@@ -393,8 +393,7 @@ func run(args []string) error {
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		var sigerr prompt.SignalError
-		if errors.As(err, &sigerr) {
+		if sigerr, ok := errors.AsType[prompt.SignalError](err); ok {
 			os.Exit(128 + sigerr.Signal())
 		}
 
