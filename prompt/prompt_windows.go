@@ -50,11 +50,12 @@ func (t *Terminal) Read(p []byte) (int, error) {
 // ContextReader returns an io.ReadCloser that cancels the Read operation when
 // context's Done channel is closed.
 func (t *Terminal) ContextReader(ctx context.Context) (io.ReadCloser, error) {
+	ctx, cancel := context.WithCancel(ctx)
 	go func() {
 		<-ctx.Done()
 		windows.CancelIoEx(windows.Handle(t.conin.Fd()), nil)
 	}()
-	return &contextReader{ctx, t.conin}, nil
+	return &contextReader{ctx, t.conin, cancel}, nil
 }
 
 // Write writes len(p) bytes to the terminal.
@@ -124,8 +125,9 @@ func (t *Terminal) GetSize() (width, height int, err error) {
 }
 
 type contextReader struct {
-	ctx context.Context
-	r   io.Reader
+	ctx    context.Context
+	r      io.Reader
+	cancel context.CancelFunc
 }
 
 func (r *contextReader) Read(p []byte) (int, error) {
@@ -136,6 +138,7 @@ func (r *contextReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func (*contextReader) Close() error {
+func (r *contextReader) Close() error {
+	r.cancel()
 	return nil
 }

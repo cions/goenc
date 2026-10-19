@@ -70,9 +70,12 @@ func (t *Terminal) Read(p []byte) (int, error) {
 // ContextReader returns an io.ReadCloser that cancels the Read operation when
 // context's Done channel is closed.
 func (t *Terminal) ContextReader(ctx context.Context) (io.ReadCloser, error) {
+	ctx, cancel := context.WithCancel(ctx)
+
 	var pipe [2]int
 	err := ignoringEINTR(func() error { return unix.Pipe(pipe[:]) })
 	if err != nil {
+		cancel()
 		return nil, &os.SyscallError{Syscall: "pipe", Err: err}
 	}
 
@@ -82,9 +85,10 @@ func (t *Terminal) ContextReader(ctx context.Context) (io.ReadCloser, error) {
 	}()
 
 	return &contextReader{
-		ctx: ctx,
-		t:   t,
-		pfd: pipe[0],
+		ctx:    ctx,
+		t:      t,
+		pfd:    pipe[0],
+		cancel: cancel,
 	}, nil
 }
 
@@ -143,9 +147,10 @@ func (t *Terminal) GetSize() (width, height int, err error) {
 }
 
 type contextReader struct {
-	ctx context.Context
-	t   *Terminal
-	pfd int
+	ctx    context.Context
+	t      *Terminal
+	pfd    int
+	cancel context.CancelFunc
 }
 
 func (r *contextReader) Read(p []byte) (int, error) {
@@ -170,6 +175,7 @@ func (r *contextReader) Close() error {
 	if err := unix.Close(r.pfd); err != nil {
 		return &os.SyscallError{Syscall: "close", Err: err}
 	}
+	r.cancel()
 	return nil
 }
 
