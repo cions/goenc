@@ -260,6 +260,9 @@ func (t *Terminal) readLine(r io.Reader, prompt string, transform Transformer) (
 		if _, err2 := t.Write(concat(disp, "\r\n", dbp)); err2 != nil {
 			err = errors.Join(err, err2)
 		}
+		if err != nil {
+			clear(buffer)
+		}
 	}()
 
 	scanner := bufio.NewScanner(r)
