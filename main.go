@@ -22,6 +22,14 @@ const (
 	DefaultMaxMemory = 16 << 20 // 16 GiB
 )
 
+const (
+	SaltSize        = 16
+	HeaderSize      = 10 + SaltSize
+	NonceSize       = chacha20poly1305.NonceSizeX
+	CiphertextStart = HeaderSize + NonceSize
+	MinSize         = HeaderSize + NonceSize + chacha20poly1305.Overhead
+)
+
 var (
 	ErrFormat     = errors.New("not a valid goenc file")
 	ErrInvalidTag = errors.New("tag verification failed (password is wrong or data is corrupted)")
@@ -75,37 +83,6 @@ func setDefaultOptions(opts *Options) *Options {
 // Encrypt encrypts plaintext with password.
 func Encrypt(password, plaintext []byte, opts *Options) ([]byte, error) {
 	opts = setDefaultOptions(opts)
-	switch opts.Format {
-	case FormatDefault, FormatV1:
-		return encryptV1(password, plaintext, opts)
-	default:
-		return nil, fmt.Errorf("goenc: invalid Format: %v", opts.Format)
-	}
-}
-
-// Decrypt decrypts input with password.
-func Decrypt(password, input []byte, opts *Options) ([]byte, error) {
-	opts = setDefaultOptions(opts)
-	if len(input) == 0 {
-		return nil, io.ErrUnexpectedEOF
-	}
-	switch input[0] {
-	case 0x01:
-		return decryptV1(password, input, opts)
-	default:
-		return nil, ErrFormat
-	}
-}
-
-const (
-	saltSizeV1   = 16
-	headerSizeV1 = 10 + saltSizeV1
-	nonceSizeV1  = chacha20poly1305.NonceSizeX
-	ctStartV1    = headerSizeV1 + nonceSizeV1
-	minSizeV1    = headerSizeV1 + nonceSizeV1 + chacha20poly1305.Overhead
-)
-
-func encryptV1(password, plaintext []byte, opts *Options) ([]byte, error) {
 	if opts.Time > opts.MaxTime {
 		return nil, fmt.Errorf("time parameter (%v) exceeds the upper limit (%v)", opts.Time, opts.MaxTime)
 	}
@@ -113,11 +90,15 @@ func encryptV1(password, plaintext []byte, opts *Options) ([]byte, error) {
 		return nil, fmt.Errorf("memory parameter (%v) exceeds the upper limit (%v)", opts.Memory, opts.MaxMemory)
 	}
 
-	buf := make([]byte, minSizeV1+len(plaintext))
-	header := buf[:headerSizeV1]
-	salt := header[10:]
-	nonce := buf[headerSizeV1:ctStartV1]
-	dst := buf[:ctStartV1]
+	if opts.Format != FormatDefault && opts.Format != FormatV1 {
+		return nil, fmt.Errorf("goenc: invalid Format: %v", opts.Format)
+	}
+
+	buf := make([]byte, MinSize+len(plaintext))
+	header := buf[:HeaderSize]
+	salt := buf[HeaderSize-SaltSize : HeaderSize]
+	nonce := buf[HeaderSize : HeaderSize+NonceSize]
+	dst := buf[:CiphertextStart]
 
 	header[0] = 0x01
 	binary.LittleEndian.PutUint32(header[1:5], opts.Time)
@@ -138,21 +119,27 @@ func encryptV1(password, plaintext []byte, opts *Options) ([]byte, error) {
 	return aead.Seal(dst, nonce, plaintext, header), nil
 }
 
-func decryptV1(password, input []byte, opts *Options) ([]byte, error) {
-	if len(input) < minSizeV1 {
+// Decrypt decrypts input with password.
+func Decrypt(password, input []byte, opts *Options) ([]byte, error) {
+	opts = setDefaultOptions(opts)
+
+	if len(input) == 0 {
 		return nil, io.ErrUnexpectedEOF
 	}
 	if input[0] != 0x01 {
 		return nil, ErrFormat
 	}
+	if len(input) < MinSize {
+		return nil, io.ErrUnexpectedEOF
+	}
 
-	header := input[:headerSizeV1]
+	header := input[:HeaderSize]
 	time := binary.LittleEndian.Uint32(header[1:5])
 	memory := binary.LittleEndian.Uint32(header[5:9])
 	threads := header[9]
-	salt := header[10:]
-	nonce := input[headerSizeV1:ctStartV1]
-	ciphertext := input[ctStartV1:]
+	salt := header[HeaderSize-SaltSize:]
+	nonce := input[HeaderSize : HeaderSize+NonceSize]
+	ciphertext := input[CiphertextStart:]
 
 	if time > opts.MaxTime {
 		return nil, fmt.Errorf("time parameter (%v) exceeds the upper limit (%v)", time, opts.MaxTime)
