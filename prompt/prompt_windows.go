@@ -27,6 +27,7 @@ const (
 type Terminal struct {
 	conin, conout   *os.File
 	inMode, outMode uint32
+	rawMode         bool
 }
 
 // NewTerminal opens a terminal.
@@ -75,6 +76,10 @@ func (t *Terminal) Close() error {
 
 // MakeRaw puts the terminal into raw mode.
 func (t *Terminal) MakeRaw() error {
+	if t.rawMode {
+		return errors.New("terminal is already in raw mode")
+	}
+
 	if err := windows.GetConsoleMode(windows.Handle(t.conin.Fd()), &t.inMode); err != nil {
 		return &os.SyscallError{Syscall: "GetConsoleMode", Err: err}
 	}
@@ -99,11 +104,16 @@ func (t *Terminal) MakeRaw() error {
 		return &os.SyscallError{Syscall: "SetConsoleMode", Err: err}
 	}
 
+	t.rawMode = true
+
 	return nil
 }
 
 // Restore restores the terminal to the state prior to calling MakeRaw.
 func (t *Terminal) Restore() error {
+	if !t.rawMode {
+		return errors.New("terminal is not in raw mode")
+	}
 	err1 := windows.SetConsoleMode(windows.Handle(t.conin.Fd()), t.inMode)
 	if err1 != nil {
 		err1 = &os.SyscallError{Syscall: "SetConsoleMode", Err: err1}
@@ -112,6 +122,7 @@ func (t *Terminal) Restore() error {
 	if err2 != nil {
 		err2 = &os.SyscallError{Syscall: "SetConsoleMode", Err: err2}
 	}
+	t.rawMode = false
 	return errors.Join(err1, err2)
 }
 

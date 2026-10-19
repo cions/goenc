@@ -118,6 +118,9 @@ func (t *Terminal) Close() error {
 
 // MakeRaw puts the terminal into raw mode.
 func (t *Terminal) MakeRaw() error {
+	if t.oldState != nil {
+		return errors.New("terminal is already in raw mode")
+	}
 	oldState, err := term.MakeRaw(t.fd)
 	if err != nil {
 		return &os.SyscallError{Syscall: "ioctl", Err: err}
@@ -129,11 +132,12 @@ func (t *Terminal) MakeRaw() error {
 // Restore restores the terminal to the state prior to calling MakeRaw.
 func (t *Terminal) Restore() error {
 	if t.oldState == nil {
-		return nil
+		return errors.New("terminal is not in raw mode")
 	}
 	if err := term.Restore(t.fd, t.oldState); err != nil {
 		return &os.SyscallError{Syscall: "ioctl", Err: err}
 	}
+	t.oldState = nil
 	return nil
 }
 
