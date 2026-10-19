@@ -82,6 +82,8 @@ func (t *Terminal) MakeRaw() error {
 	}
 
 	inMode := t.inMode
+	inMode &^= windows.ENABLE_LINE_INPUT
+	inMode &^= windows.ENABLE_ECHO_INPUT
 	inMode |= windows.ENABLE_VIRTUAL_TERMINAL_INPUT
 	if err := windows.SetConsoleMode(windows.Handle(t.conin.Fd()), inMode); err != nil {
 		return &os.SyscallError{Syscall: "SetConsoleMode", Err: err}
