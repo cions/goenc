@@ -37,6 +37,8 @@ func TestEncrypt(t *testing.T) {
 				if err != nil {
 					panic(err)
 				}
+				opts.MaxTime = 16
+				opts.MaxMemory = 128 << 10
 
 				encrypted, err := Encrypt(password, plaintext, opts)
 				if err != nil {
@@ -44,7 +46,7 @@ func TestEncrypt(t *testing.T) {
 					continue
 				}
 
-				decrypted, err := Decrypt(password, encrypted)
+				decrypted, err := Decrypt(password, encrypted, opts)
 				if err != nil {
 					t.Errorf("#%d: Decrypt: unexpected error: %v", i, err)
 					continue
@@ -54,15 +56,13 @@ func TestEncrypt(t *testing.T) {
 					t.Errorf("#%d: plaintexts does not match: want %x, but got %x", i, plaintext, decrypted)
 				}
 
-				if _, err = Decrypt([]byte("wrong password"), encrypted); err == nil {
+				if _, err := Decrypt([]byte("wrong password"), encrypted, opts); err == nil {
 					t.Errorf("#%d: Decrypt was successful with wrong password", i)
 				}
 
-				// Tampering KDF parameters (stored in encrypted[:10]) can cause
-				// the deriving of the key to take a very long time.
-				pos := rand.N(len(encrypted)-10) + 10
+				pos := rand.N(len(encrypted))
 				encrypted[pos] ^= 0x80
-				if _, err = Decrypt(password, encrypted); err == nil {
+				if _, err := Decrypt(password, encrypted, opts); err == nil {
 					t.Errorf("#%d: Decrypt was successful with tampered ciphertext", i)
 				}
 			}
@@ -71,6 +71,11 @@ func TestEncrypt(t *testing.T) {
 }
 
 func TestDecrypt(t *testing.T) {
+	opts := &Options{
+		MaxTime:   128,
+		MaxMemory: 128 << 10,
+	}
+
 	tests := []struct {
 		password, plaintext, input string
 	}{
@@ -83,7 +88,6 @@ func TestDecrypt(t *testing.T) {
 				"Y1W5YCXmaLiTAbn4YhEAktj6jyzBXo1A/cQ45K56YZpFOR5rAMMI2om4D7YHmA==",
 		},
 	}
-
 	for i, tt := range tests {
 		password := []byte(tt.password)
 		plaintext := []byte(tt.plaintext)
@@ -92,7 +96,7 @@ func TestDecrypt(t *testing.T) {
 			panic(err)
 		}
 
-		decrypted, err := Decrypt(password, input)
+		decrypted, err := Decrypt(password, input, opts)
 		if err != nil {
 			t.Errorf("#%d: Decrypt: unexpected error: %v", i, err)
 			continue
@@ -102,28 +106,44 @@ func TestDecrypt(t *testing.T) {
 			t.Errorf("#%d: plaintexts does not match: want %x, but got %x", i, plaintext, decrypted)
 		}
 
-		if _, err = Decrypt([]byte("wrong password"), input); err == nil {
+		if _, err := Decrypt([]byte("wrong password"), input, opts); err == nil {
 			t.Errorf("#%d: Decrypt was successful with wrong password", i)
 		}
 
-		// Tampering KDF parameters (stored in encrypted[:10]) can cause
-		// the deriving of the key to take a very long time.
-		pos := rand.N(len(input)-10) + 10
+		pos := rand.N(len(input))
 		input[pos] ^= 0x80
-		if _, err = Decrypt(password, input); err == nil {
+		if _, err := Decrypt(password, input, opts); err == nil {
 			t.Errorf("#%d: Decrypt was successful with tampered ciphertext", i)
 		}
 	}
 
-	if _, err := Decrypt([]byte{}, []byte{}); err != io.ErrUnexpectedEOF {
+	if _, err := Decrypt([]byte{}, []byte{}, opts); err != io.ErrUnexpectedEOF {
 		t.Errorf("expected ErrUnexpectedEOF, but got %v", err)
 	}
 
-	if _, err := Decrypt([]byte{}, []byte{0x01, 0x02}); err != io.ErrUnexpectedEOF {
+	if _, err := Decrypt([]byte{}, []byte{0x01, 0x02}, opts); err != io.ErrUnexpectedEOF {
 		t.Errorf("expected ErrUnexpectedEOF, but got %v", err)
 	}
 
-	if _, err := Decrypt([]byte{}, []byte{0x00}); err != ErrFormat {
+	if _, err := Decrypt([]byte{}, []byte{0x00}, opts); err != ErrFormat {
 		t.Errorf("expected ErrFormat, but got %v", err)
+	}
+
+	// T=1024,M=64M,P=1
+	input, err := base64.StdEncoding.DecodeString("AQAEAAAAAAEAAWFqH7u5nGFBgF70CaDQ4XceR6qdg8aonxONJZFW1odaQvcKAgvl3HdO3u1VzzmT5G9rs4czy6hT")
+	if err != nil {
+		panic(err)
+	}
+	if _, err := Decrypt([]byte{}, input, nil); err == nil {
+		t.Errorf("Decrypt should return an error when time parameter exceeds MaxTime")
+	}
+
+	// T=1,M=32G,P=1
+	input, err = base64.StdEncoding.DecodeString("AQEAAAAAAAACAe9imVkApgD+dE2xbWNTdw3kZH0vb/3t7a1aykwIjnJ/lQUXXrVzK2lg6C+AB5rjfhZBTPY1cZaS")
+	if err != nil {
+		panic(err)
+	}
+	if _, err := Decrypt([]byte{}, input, nil); err == nil {
+		t.Errorf("Decrypt should return an error when memory parameter exceeds MaxMemory")
 	}
 }

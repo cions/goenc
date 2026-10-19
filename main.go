@@ -14,6 +14,14 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
+const (
+	DefaultTime      = 8
+	DefaultMemory    = 256 << 10 // 256 MiB
+	DefaultThreads   = 4
+	DefaultMaxTime   = 128
+	DefaultMaxMemory = 16 << 20 // 16 GiB
+)
+
 var (
 	ErrFormat     = errors.New("not a valid goenc file")
 	ErrInvalidTag = errors.New("tag verification failed (password is wrong or data is corrupted)")
@@ -32,16 +40,41 @@ const (
 	FormatV1
 )
 
-// Options are encryption parameters.
+// Options are encryption/decryption parameters.
 type Options struct {
-	Format  Format // File format
-	Time    uint32 // KDF time parameter
-	Memory  uint32 // KDF memory parameter
-	Threads uint8  // KDF parallelism parameter
+	Format    Format // File format
+	Time      uint32 // KDF time parameter
+	MaxTime   uint32 // Upper limit for KDF time parameter
+	Memory    uint32 // KDF memory parameter
+	MaxMemory uint32 // Upper limit for KDF memory parameter
+	Threads   uint8  // KDF parallelism parameter
+}
+
+func setDefaultOptions(opts *Options) *Options {
+	if opts == nil {
+		opts = &Options{}
+	}
+	if opts.Time == 0 {
+		opts.Time = DefaultTime
+	}
+	if opts.MaxTime == 0 {
+		opts.MaxTime = DefaultMaxTime
+	}
+	if opts.Memory == 0 {
+		opts.Memory = DefaultMemory
+	}
+	if opts.MaxMemory == 0 {
+		opts.MaxMemory = DefaultMaxMemory
+	}
+	if opts.Threads == 0 {
+		opts.Threads = DefaultThreads
+	}
+	return opts
 }
 
 // Encrypt encrypts plaintext with password.
 func Encrypt(password, plaintext []byte, opts *Options) ([]byte, error) {
+	opts = setDefaultOptions(opts)
 	switch opts.Format {
 	case FormatDefault, FormatV1:
 		return encryptV1(password, plaintext, opts)
@@ -51,13 +84,14 @@ func Encrypt(password, plaintext []byte, opts *Options) ([]byte, error) {
 }
 
 // Decrypt decrypts input with password.
-func Decrypt(password, input []byte) ([]byte, error) {
+func Decrypt(password, input []byte, opts *Options) ([]byte, error) {
+	opts = setDefaultOptions(opts)
 	if len(input) == 0 {
 		return nil, io.ErrUnexpectedEOF
 	}
 	switch input[0] {
 	case 0x01:
-		return decryptV1(password, input)
+		return decryptV1(password, input, opts)
 	default:
 		return nil, ErrFormat
 	}
@@ -72,6 +106,13 @@ const (
 )
 
 func encryptV1(password, plaintext []byte, opts *Options) ([]byte, error) {
+	if opts.Time > opts.MaxTime {
+		return nil, fmt.Errorf("time parameter (%v) exceeds the upper limit (%v)", opts.Time, opts.MaxTime)
+	}
+	if opts.Memory > opts.MaxMemory {
+		return nil, fmt.Errorf("memory parameter (%v) exceeds the upper limit (%v)", opts.Memory, opts.MaxMemory)
+	}
+
 	buf := make([]byte, minSizeV1+len(plaintext))
 	header := buf[:headerSizeV1]
 	salt := header[10:]
@@ -97,7 +138,7 @@ func encryptV1(password, plaintext []byte, opts *Options) ([]byte, error) {
 	return aead.Seal(dst, nonce, plaintext, header), nil
 }
 
-func decryptV1(password, input []byte) ([]byte, error) {
+func decryptV1(password, input []byte, opts *Options) ([]byte, error) {
 	if len(input) < minSizeV1 {
 		return nil, io.ErrUnexpectedEOF
 	}
@@ -112,6 +153,13 @@ func decryptV1(password, input []byte) ([]byte, error) {
 	salt := header[10:]
 	nonce := input[headerSizeV1:ctStartV1]
 	ciphertext := input[ctStartV1:]
+
+	if time > opts.MaxTime {
+		return nil, fmt.Errorf("time parameter (%v) exceeds the upper limit (%v)", time, opts.MaxTime)
+	}
+	if memory > opts.MaxMemory {
+		return nil, fmt.Errorf("memory parameter (%v) exceeds the upper limit (%v)", memory, opts.MaxMemory)
+	}
 
 	key := argon2.IDKey(password, salt, time, memory, threads, chacha20poly1305.KeySize)
 	aead, err := chacha20poly1305.NewX(key)

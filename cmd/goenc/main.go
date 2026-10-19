@@ -32,6 +32,11 @@ Options:
   -t, --time=N          Argon2 time parameter (default: 8)
   -m, --memory=N[KMG]   Argon2 memory parameter (default: 256M)
   -p, --parallelism=N   Argon2 parallelism parameter (default: 4)
+      --max-time=N      Upper limit for the Argon2 time parameter
+                        (default: 128)
+      --max-memory=N[KMG]
+                        Upper limit for the Argon2 memory parameter
+                        (default: 16G)
   -r, --retries=N       Maximum number of attempts to enter password
                         (default: 3)
       --password-from=FILE
@@ -53,7 +58,9 @@ type Options struct {
 	Encrypt      bool
 	NoClobber    bool
 	Time         uint32
+	MaxTime      uint32
 	Memory       uint32
+	MaxMemory    uint32
 	Threads      uint8
 	Retries      uint8
 	PasswordFrom string
@@ -75,6 +82,10 @@ func (opts *Options) Kind(name string) options.Kind {
 		return options.Required
 	case "-p", "--parallelism":
 		return options.Required
+	case "--max-time":
+		return options.Required
+	case "--max-memory":
+		return options.Required
 	case "-r", "--retries":
 		return options.Required
 	case "--password-from":
@@ -86,6 +97,25 @@ func (opts *Options) Kind(name string) options.Kind {
 	default:
 		return options.Unknown
 	}
+}
+
+func (opts *Options) parseSize(value string) (uint64, error) {
+	unit := uint64(1)
+	width := 32
+	switch {
+	case strings.HasSuffix(value, "K"):
+		value = strings.TrimSuffix(value, "K")
+	case strings.HasSuffix(value, "M"):
+		value = strings.TrimSuffix(value, "M")
+		unit = 1 << 10
+		width -= 10
+	case strings.HasSuffix(value, "G"):
+		value = strings.TrimSuffix(value, "G")
+		unit = 1 << 20
+		width -= 20
+	}
+	n, err := strconv.ParseUint(value, 10, width)
+	return n * unit, err
 }
 
 func (opts *Options) Option(name string, value string, hasValue bool) error {
@@ -105,28 +135,13 @@ func (opts *Options) Option(name string, value string, hasValue bool) error {
 		}
 		opts.Time = uint32(n)
 	case "-m", "--memory":
-		unit := uint64(1)
-		width := 32
-		switch {
-		case strings.HasSuffix(value, "K"):
-			value = strings.TrimSuffix(value, "K")
-		case strings.HasSuffix(value, "M"):
-			value = strings.TrimSuffix(value, "M")
-			unit = 1 << 10
-			width -= 10
-		case strings.HasSuffix(value, "G"):
-			value = strings.TrimSuffix(value, "G")
-			unit = 1 << 20
-			width -= 20
-		}
-
-		n, err := strconv.ParseUint(value, 10, width)
+		n, err := opts.parseSize(value)
 		if err != nil {
 			return err
 		} else if n == 0 {
 			return strconv.ErrRange
 		}
-		opts.Memory = uint32(n * unit)
+		opts.Memory = uint32(n)
 	case "-p", "--parallelism":
 		n, err := strconv.ParseUint(value, 10, 8)
 		if err != nil {
@@ -135,6 +150,22 @@ func (opts *Options) Option(name string, value string, hasValue bool) error {
 			return strconv.ErrRange
 		}
 		opts.Threads = uint8(n)
+	case "--max-time":
+		n, err := strconv.ParseUint(value, 10, 32)
+		if err != nil {
+			return err
+		} else if n == 0 {
+			return strconv.ErrRange
+		}
+		opts.MaxTime = uint32(n)
+	case "--max-memory":
+		n, err := opts.parseSize(value)
+		if err != nil {
+			return err
+		} else if n == 0 {
+			return strconv.ErrRange
+		}
+		opts.MaxMemory = uint32(n)
 	case "-r", "--retries":
 		n, err := strconv.ParseUint(value, 10, 8)
 		if err != nil {
@@ -232,9 +263,11 @@ func encrypt(opts *Options) (err error) {
 	}
 
 	ciphertext, err2 := goenc.Encrypt(password, plaintext, &goenc.Options{
-		Time:    opts.Time,
-		Memory:  opts.Memory,
-		Threads: opts.Threads,
+		Time:      opts.Time,
+		MaxTime:   opts.MaxTime,
+		Memory:    opts.Memory,
+		MaxMemory: opts.MaxMemory,
+		Threads:   opts.Threads,
 	})
 	if err2 != nil {
 		return err2
@@ -264,6 +297,11 @@ func encrypt(opts *Options) (err error) {
 }
 
 func tryDecrypt(opts *Options, input []byte) (plaintext []byte, err error) {
+	opts2 := &goenc.Options{
+		MaxTime:   opts.MaxTime,
+		MaxMemory: opts.MaxMemory,
+	}
+
 	if opts.PasswordFrom != "" {
 		var password []byte
 		if opts.PasswordFrom == "-" {
@@ -274,11 +312,11 @@ func tryDecrypt(opts *Options, input []byte) (plaintext []byte, err error) {
 		if err != nil {
 			return nil, err
 		}
-		return goenc.Decrypt(password, input)
+		return goenc.Decrypt(password, input, opts2)
 	}
 	if value, ok := os.LookupEnv("PASSWORD"); ok {
 		password := []byte(value)
-		return goenc.Decrypt(password, input)
+		return goenc.Decrypt(password, input, opts2)
 	}
 
 	terminal, err2 := prompt.NewTerminal()
@@ -295,7 +333,7 @@ func tryDecrypt(opts *Options, input []byte) (plaintext []byte, err error) {
 		if err2 != nil {
 			return nil, fmt.Errorf("ReadPassword: %w", err2)
 		}
-		plaintext, err2 := goenc.Decrypt(password, input)
+		plaintext, err2 := goenc.Decrypt(password, input, opts2)
 		if errors.Is(err2, goenc.ErrInvalidTag) && tries < opts.Retries {
 			fmt.Fprintf(terminal, "%v: error: incorrect password. try again.\n", NAME)
 			tries++
@@ -358,7 +396,9 @@ func run(args []string) error {
 		Encrypt:   true,
 		NoClobber: false,
 		Time:      8,
+		MaxTime:   128,
 		Memory:    256 << 10, // 256 MiB
+		MaxMemory: 16 << 20,  // 16 GiB
 		Threads:   4,
 		Retries:   3,
 		Input:     "-",
@@ -382,6 +422,10 @@ func run(args []string) error {
 		return err
 	case opts.PasswordFrom == "-" && opts.Input == "-":
 		return options.Errorf("cannot read both password and input from stdin")
+	case opts.Time > opts.MaxTime:
+		return options.Errorf("--time exceeds --max-time")
+	case opts.Memory > opts.MaxMemory:
+		return options.Errorf("--memory exceeds --max-memory")
 	}
 
 	if opts.Encrypt {

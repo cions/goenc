@@ -22,6 +22,11 @@ Options:
   -t, --time=N          Argon2 time parameter (default: 8)
   -m, --memory=N[KMG]   Argon2 memory parameter (default: 256M)
   -p, --parallelism=N   Argon2 parallelism parameter (default: 4)
+      --max-time=N      Upper limit for the Argon2 time parameter
+                        (default: 128)
+      --max-memory=N[KMG]
+                        Upper limit for the Argon2 memory parameter
+                        (default: 16G)
   -r, --retries=N       Maximum number of attempts to enter password
                         (default: 3)
       --password-from=FILE
