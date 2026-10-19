@@ -103,6 +103,9 @@ func (t *Terminal) Write(p []byte) (int, error) {
 		if err != nil {
 			return nn, &os.PathError{Op: "write", Path: "/dev/tty", Err: err}
 		}
+		if n == 0 {
+			return nn, io.ErrShortWrite
+		}
 		nn += n
 	}
 	return nn, nil
