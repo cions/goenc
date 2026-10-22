@@ -62,6 +62,9 @@ func setDefaultOptions(opts *Options) *Options {
 	if opts == nil {
 		opts = &Options{}
 	}
+	if opts.Format == FormatDefault {
+		opts.Format = FormatV1
+	}
 	if opts.Time == 0 {
 		opts.Time = DefaultTime
 	}
@@ -83,15 +86,14 @@ func setDefaultOptions(opts *Options) *Options {
 // Encrypt encrypts plaintext with password.
 func Encrypt(password, plaintext []byte, opts *Options) ([]byte, error) {
 	opts = setDefaultOptions(opts)
+	if opts.Format != FormatV1 {
+		return nil, fmt.Errorf("unsupported Format (%v)", opts.Format)
+	}
 	if opts.Time > opts.MaxTime {
 		return nil, fmt.Errorf("time parameter (%v) exceeds the upper limit (%v)", opts.Time, opts.MaxTime)
 	}
 	if opts.Memory > opts.MaxMemory {
 		return nil, fmt.Errorf("memory parameter (%v) exceeds the upper limit (%v)", opts.Memory, opts.MaxMemory)
-	}
-
-	if opts.Format != FormatDefault && opts.Format != FormatV1 {
-		return nil, fmt.Errorf("goenc: invalid Format: %v", opts.Format)
 	}
 
 	buf := make([]byte, MinSize+len(plaintext))
