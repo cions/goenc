@@ -229,11 +229,16 @@ func getPassword(opts *Options) (password []byte, err error) {
 			return nil, fmt.Errorf("ReadPassword: %w", err2)
 		}
 		if subtle.ConstantTimeCompare(password, confirmPassword) != 0 {
+			clear(confirmPassword)
 			return password, nil
 		} else if tries < opts.Retries {
+			clear(password)
+			clear(confirmPassword)
 			fmt.Fprintf(terminal, "%v: error: passwords do not match. try again.\n", NAME)
 			tries++
 		} else {
+			clear(password)
+			clear(confirmPassword)
 			return nil, errors.New("passwords do not match")
 		}
 	}
@@ -256,6 +261,7 @@ func encrypt(opts *Options) (err error) {
 	if err2 != nil {
 		return err2
 	}
+	defer clear(password)
 
 	plaintext, err2 := io.ReadAll(r)
 	if err2 != nil {
@@ -312,10 +318,12 @@ func tryDecrypt(opts *Options, input []byte) (plaintext []byte, err error) {
 		if err != nil {
 			return nil, err
 		}
+		defer clear(password)
 		return goenc.Decrypt(password, input, opts2)
 	}
 	if value, ok := os.LookupEnv("PASSWORD"); ok {
 		password := []byte(value)
+		defer clear(password)
 		return goenc.Decrypt(password, input, opts2)
 	}
 
@@ -334,6 +342,7 @@ func tryDecrypt(opts *Options, input []byte) (plaintext []byte, err error) {
 			return nil, fmt.Errorf("ReadPassword: %w", err2)
 		}
 		plaintext, err2 := goenc.Decrypt(password, input, opts2)
+		clear(password)
 		if errors.Is(err2, goenc.ErrInvalidTag) && tries < opts.Retries {
 			fmt.Fprintf(terminal, "%v: error: incorrect password. try again.\n", NAME)
 			tries++
