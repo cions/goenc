@@ -36,7 +36,7 @@ Options:
                         (default: 128)
       --max-memory=N[KMG]
                         Upper limit for the Argon2 memory parameter
-                        (default: 16G)
+                        (default: 4G)
   -r, --retries=N       Maximum number of attempts to enter password
                         (default: 3)
       --password-from=FILE
@@ -407,7 +407,7 @@ func run(args []string) error {
 		Time:      8,
 		MaxTime:   128,
 		Memory:    256 << 10, // 256 MiB
-		MaxMemory: 16 << 20,  // 16 GiB
+		MaxMemory: 4 << 20,   // 4 GiB
 		Threads:   4,
 		Retries:   3,
 		Input:     "-",

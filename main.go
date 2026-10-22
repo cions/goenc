@@ -19,7 +19,7 @@ const (
 	DefaultMemory    = 256 << 10 // 256 MiB
 	DefaultThreads   = 4
 	DefaultMaxTime   = 128
-	DefaultMaxMemory = 16 << 20 // 16 GiB
+	DefaultMaxMemory = 4 << 20 // 4 GiB
 )
 
 const (

@@ -26,7 +26,7 @@ Options:
                         (default: 128)
       --max-memory=N[KMG]
                         Upper limit for the Argon2 memory parameter
-                        (default: 16G)
+                        (default: 4G)
   -r, --retries=N       Maximum number of attempts to enter password
                         (default: 3)
       --password-from=FILE
