@@ -231,10 +231,10 @@ func getPassword(opts *Options) (password []byte, err error) {
 		if subtle.ConstantTimeCompare(password, confirmPassword) != 0 {
 			return password, nil
 		} else if tries < opts.Retries {
-			fmt.Fprintf(terminal, "%v: error: passwords does not match. try again.\n", NAME)
+			fmt.Fprintf(terminal, "%v: error: passwords do not match. try again.\n", NAME)
 			tries++
 		} else {
-			return nil, errors.New("passwords does not match")
+			return nil, errors.New("passwords do not match")
 		}
 	}
 }

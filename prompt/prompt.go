@@ -26,7 +26,7 @@ import (
 type SignalError syscall.Signal
 
 func (e SignalError) Error() string {
-	return fmt.Sprintf("recerived signal %v", syscall.Signal(e))
+	return fmt.Sprintf("received signal %v", syscall.Signal(e))
 }
 
 // Signal returns the signal number.
